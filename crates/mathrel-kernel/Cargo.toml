@@ -1,0 +1,21 @@
+[package]
+name = "mathrel-kernel"
+description = "Relational Math Kernel: dependency and freshness tracking for interdependent mathematical objects"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# 要件定義書 §9: 本体依存は thiserror / indexmap / smallvec / rustc-hash のみ
+thiserror = "1"
+indexmap = "2"
+smallvec = "1"
+rustc-hash = "2"
+
+[dev-dependencies]
+proptest = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"

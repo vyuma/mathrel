@@ -1,0 +1,16 @@
+[package]
+name = "mathrel-cli"
+description = "Interactive REPL for the Relational Math Kernel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mathrel"
+path = "src/main.rs"
+
+[dependencies]
+mathrel-kernel.workspace = true
+mathrel-host.workspace = true
+mathrel-verify.workspace = true

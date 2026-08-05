@@ -1,0 +1,17 @@
+[package]
+name = "mathrel-verify"
+description = "Proof obligations, proof-assistant backends, and trust propagation for the Relational Math Kernel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+mathrel-kernel.workspace = true
+
+[dev-dependencies]
+proptest = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"

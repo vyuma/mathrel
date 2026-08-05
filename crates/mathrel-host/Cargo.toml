@@ -1,0 +1,14 @@
+[package]
+name = "mathrel-host"
+description = "Host layer for mathrel-kernel: parsing, dependency extraction, and evaluation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+mathrel-kernel.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"

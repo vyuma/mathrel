@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/mathrel-kernel",
+    "crates/mathrel-verify",
+    "crates/mathrel-host",
+    "crates/mathrel-cli",
+    "crates/mathrel-wasm",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+mathrel-kernel = { path = "crates/mathrel-kernel" }
+mathrel-verify = { path = "crates/mathrel-verify" }
+mathrel-host = { path = "crates/mathrel-host" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"

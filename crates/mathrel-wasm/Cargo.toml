@@ -1,0 +1,14 @@
+[package]
+name = "mathrel-wasm"
+description = "Raw wasm ABI for the Relational Math Kernel workspace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mathrel-kernel.workspace = true
+mathrel-host.workspace = true
