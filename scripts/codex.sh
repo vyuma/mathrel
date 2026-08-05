@@ -4,8 +4,9 @@
 #
 # 素で `codex exec` を叩くと、この環境では 3 つの落とし穴がある。
 #
-#   1. mathkernel は git リポジトリではないので、`--skip-git-repo-check` が要る。
-#      これがないと "Not inside a trusted directory" で即座に失敗する。
+#   1. git 管理外のディレクトリだと "Not inside a trusted directory" で即死する。
+#      このリポジトリは git 化したので今は起きないが、複製して使う場合に
+#      備えて `--skip-git-repo-check` を付けてある。
 #
 #   2. 標準入力が開いたままだと、Codex は「追加の入力」を待ち続ける。
 #      端末なしで呼ぶと止まって見える。`< /dev/null` で閉じる。

@@ -130,7 +130,7 @@ echo "長いプロンプト" | scripts/codex.sh -
 
 | 症状 | 原因 | 対処 |
 |---|---|---|
-| `Not inside a trusted directory` で即死 | このリポジトリが git 管理下にない | `--skip-git-repo-check` |
+| `Not inside a trusted directory` で即死 | git 管理外だと弾かれる（現在は git 化済みなので起きない） | `--skip-git-repo-check`（保険として付けてある） |
 | 何も出力せず止まったまま | 標準入力が開いていて「追加の入力」を待ち続ける | `< /dev/null` |
 | 10 分経っても終わらない | `~/.codex/config.toml` が `model_reasoning_effort = "xhigh"` | `-c model_reasoning_effort=medium` |
 
