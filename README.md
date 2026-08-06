@@ -42,7 +42,8 @@ mathrel-kernel  ←  mathrel-verify  ←  mathrel-host  ←  mathrel-cli
 | `mathrel-verify` | 証明義務・証明支援系バックエンド・信頼度の伝播 |
 | `mathrel-host` | パース、依存の抽出、評価、セル管理 |
 | `mathrel-cli` | 対話シェル `mathrel` |
-| `mathrel-wasm` | 素の C ABI（wasm-bindgen を使わない） |
+| `mathrel-ui` | 画面（Leptos → wasm）。ワークスペース外 |
+| `mathrel-wasm` | 素の C ABI（JS から叩きたい場合の入口） |
 
 ### カーネルは 2 つのことしか知らない
 
@@ -106,8 +107,27 @@ printf 'x = 2\ny = x + 1\n:list\n' | cargo run -q -p mathrel-cli
 
 対話シェルの命令は `:help` で出る。
 
+### 画面
+
 ```sh
-# wasm
+scripts/build-web.sh --release     # web/ に出る
+scripts/build-web.sh serve         # http://localhost:8080
+```
+
+画面は Leptos（Rust → wasm）で書いてある。JS のフレームワークではないので、
+**Rust と画面のあいだに JSON の境界がない**。`Workspace` / `Trust` /
+`WeakLink` が本物の型のまま届き、フィールド名を変えれば画面のほうが
+コンパイルエラーになる。
+
+数式入力は MathLive（企画書 §12）。読み込めない環境では素のテキスト入力に
+落ちる。
+
+UI クレートは**意図的にワークスペースから外してある**。Leptos が rustc 1.88 を
+要求する一方、開発機は環境変数 `RUSTUP_TOOLCHAIN` で 1.87 に固定されている
+ためで、members に入れると `cargo test --workspace` まで巻き添えになる。
+
+```sh
+# 生の C ABI（JS から叩きたい場合。画面は使っていない）
 cargo build -p mathrel-wasm --target wasm32-unknown-unknown --release
 ```
 
@@ -121,10 +141,19 @@ cargo build -p mathrel-wasm --target wasm32-unknown-unknown --release
 | `crates/mathrel-kernel/tests/properties.rs` | P1〜P6 の性質テスト（各 1000 ケース）+ 深さ 5 の連鎖 |
 | `crates/mathrel-kernel/tests/support/` | 素朴な参照実装（オラクル） |
 | `crates/mathrel-verify/tests/proof_space.rs` | 証明の依存追跡と信頼度の伝播 |
+| `crates/mathrel-host/tests/proofs.rs` | 数式セルと証明が 1 つのグラフに載ること |
+| `crates/mathrel-ui/src/view.rs` | 画面が何を見せるかの判断（ブラウザ不要） |
+| `crates/mathrel-ui/tests/browser.mjs` | 実ブラウザでの操作（CDP 直叩き） |
 
 性質テストは素朴実装との等価性を確認する。生成器が空振りしていないこと（循環・未解決・曖昧・間接下流を実際に踏んでいること）は `generators_cover_interesting_states` が見張る。
 
 Lean は入っていなくてもテストは通る。外部プロセスの起動は `CommandRunner` trait で切ってあり、**道具の有無でテストの通り方が変わらない**ようにしてある。
+
+画面のテストは 2 段。判断（何を見せるか）は `view.rs` でブラウザなしに固定し、
+DOM へ実際に届いているかは `tests/browser.mjs` が実ブラウザで確かめる。
+後者は実際にバグを 2 件出した（`<For>` がキーの同じ行を作り直さないので編集が
+反映されない／MathLive の読み込み順で初期セルだけ素の入力欄になる）。
+どちらも Rust のテストでは捕まらない類である。
 
 ---
 
@@ -164,7 +193,7 @@ echo "長いプロンプト" | scripts/codex.sh -
 - **P0（カーネル v0.1）**: 完了。シナリオテストと性質テストが green
 - **P1（評価ループ + CLI）**: 完了。上記の完了条件を CLI で確認できる
 - **P1.5（検証層の骨格）**: 完了。数式セルと証明が 1 つのグラフに載る。Lean バックエンドは実地未投入（[#23](https://github.com/vyuma/mathrel/issues/23)）
-- **P2（UI 最小）**: 未着手。wasm ABI は用意済み
+- **P2（UI 最小）**: 画面ができた（セル入力・状態表示・依存の一覧・信頼度の警告）。**ゲートである H3 の測定は未実施**（[#8](https://github.com/vyuma/mathrel/issues/8)）
 
 未解決の設計課題は [`docs/検証層の設計.md`](docs/検証層の設計.md) §6.1〜6.2 に記録してある。
 

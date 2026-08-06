@@ -44,4 +44,6 @@ pub use eval::{eval, Env, EvalError, FuncDefinition};
 pub use extract::{extract, CapabilitySpec, RelationSpec};
 pub use parser::{parse_statement, ParseError};
 pub use value::{digest_of, digest_of_value, Value};
-pub use workspace::{Cell, CellId, CellKind, EvalStats, WeakLink, Workspace, WorkspaceError};
+pub use workspace::{
+    parse_obligation_line, Cell, CellId, CellKind, EvalStats, WeakLink, Workspace, WorkspaceError,
+};

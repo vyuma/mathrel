@@ -7,6 +7,11 @@ members = [
     "crates/mathrel-cli",
     "crates/mathrel-wasm",
 ]
+# UI は別ビルドにする。Leptos が rustc 1.88 を要求するのに対し、この開発機は
+# 環境変数 RUSTUP_TOOLCHAIN で 1.87 に固定されているためである。members に
+# 入れると `cargo test --workspace` まで巻き添えで通らなくなる。
+# ビルドは scripts/build-web.sh が行う。
+exclude = ["crates/mathrel-ui"]
 
 [workspace.package]
 version = "0.1.0"

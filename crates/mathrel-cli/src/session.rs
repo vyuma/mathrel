@@ -3,9 +3,9 @@
 //! 端末との入出力は [`crate::main`] が行い、ここは純粋な関数として保つ。
 //! そうしないと CLI の振る舞いをテストできない。
 
-use mathrel_host::Workspace;
+use mathrel_host::{parse_obligation_line, Workspace};
 use mathrel_kernel::Freshness;
-use mathrel_verify::{Obligation, TrivialVerifier, Trust};
+use mathrel_verify::{TrivialVerifier, Trust};
 use std::rc::Rc;
 
 /// 1 行の入力に対する応答。
@@ -295,8 +295,8 @@ impl Session {
     /// `uses` はセルが定義する名前、`cites` は他の命題を指す。どちらも
     /// 申告制であり、命題をパースして推測することはしない。
     fn add_obligation(&mut self, rest: &str, assume: bool) -> Response {
-        let (name, rest) = match rest.split_once(':') {
-            Some((name, rest)) => (name.trim(), rest.trim()),
+        let obligation = match parse_obligation_line(rest) {
+            Some(obligation) => obligation,
             None => {
                 return Response::line(if assume {
                     ":assume <名前> : <命題> [uses a,b] [cites c,d]"
@@ -305,16 +305,8 @@ impl Session {
                 })
             }
         };
-        let (statement, uses, cites) = split_dependencies(rest);
-        if name.is_empty() || statement.is_empty() {
-            return Response::line("名前と命題の両方が要ります");
-        }
-
-        let use_refs: Vec<&str> = uses.iter().map(String::as_str).collect();
-        let cite_refs: Vec<&str> = cites.iter().map(String::as_str).collect();
-        let obligation = Obligation::new(name, &statement)
-            .using(&use_refs)
-            .citing(&cite_refs);
+        let name = obligation.name.clone();
+        let statement = obligation.statement.clone();
 
         let id = if assume {
             self.workspace.add_assumption(obligation)
@@ -489,49 +481,6 @@ fn split_once_trimmed(line: &str) -> (&str, &str) {
         Some((head, rest)) => (head.trim(), rest.trim()),
         None => (line.trim(), ""),
     }
-}
-
-/// `<命題> uses a,b cites c,d` を分解する。
-///
-/// `uses` / `cites` は省略できる。命題の中に現れる場合と区別するため、
-/// 空白で区切られた語として末尾にあるものだけを見る。
-fn split_dependencies(rest: &str) -> (String, Vec<String>, Vec<String>) {
-    let mut statement = rest.trim().to_owned();
-    let mut uses = Vec::new();
-    let mut cites = Vec::new();
-
-    // 後ろから順に剥がす。`uses` が先に書かれても `cites` が先でも動く。
-    loop {
-        let lower = statement.to_lowercase();
-        let at_uses = lower.rfind(" uses ");
-        let at_cites = lower.rfind(" cites ");
-        let at = match (at_uses, at_cites) {
-            (Some(u), Some(c)) => u.max(c),
-            (Some(u), None) => u,
-            (None, Some(c)) => c,
-            (None, None) => break,
-        };
-        let (head, tail) = statement.split_at(at);
-        let tail = tail.trim();
-        let (keyword, names) = match tail.split_once(char::is_whitespace) {
-            Some(parts) => parts,
-            None => break,
-        };
-        let parsed: Vec<String> = names
-            .split(',')
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .map(str::to_owned)
-            .collect();
-        if keyword.eq_ignore_ascii_case("uses") {
-            uses.splice(0..0, parsed);
-        } else {
-            cites.splice(0..0, parsed);
-        }
-        statement = head.trim_end().to_owned();
-    }
-
-    (statement, uses, cites)
 }
 
 /// 何をすると信頼度が下がるのか。`:trust` の末尾に出す。
@@ -864,25 +813,6 @@ mod tests {
         assert!(output.contains("未解決"), "{output}");
     }
 
-    #[test]
-    fn uses_and_cites_are_parsed_off_the_end_of_the_statement() {
-        assert_eq!(
-            split_dependencies("0 <= x uses x cites lemma"),
-            (
-                "0 <= x".to_owned(),
-                vec!["x".to_owned()],
-                vec!["lemma".to_owned()]
-            )
-        );
-        assert_eq!(
-            split_dependencies("P cites a, b"),
-            ("P".to_owned(), vec![], vec!["a".to_owned(), "b".to_owned()])
-        );
-        assert_eq!(
-            split_dependencies("何も付いていない命題"),
-            ("何も付いていない命題".to_owned(), vec![], vec![])
-        );
-    }
 
     #[test]
     fn the_verify_summary_reports_the_weakest_link() {

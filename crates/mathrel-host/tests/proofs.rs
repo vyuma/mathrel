@@ -448,3 +448,41 @@ fn the_json_snapshot_carries_the_weak_links() {
     assert!(json.contains("\"culprit\":1"), "{json}");
     assert!(json.contains("\"reason\":\""), "{json}");
 }
+
+// ---------------------------------------------------------------------
+// 1 行からの登録
+// ---------------------------------------------------------------------
+
+/// CLI と UI が同じ構文を使う。ここが唯一の定義である。
+#[test]
+fn an_obligation_can_be_written_on_one_line() {
+    let obligation =
+        mathrel_host::parse_obligation_line("thm : 0 <= x uses x cites base").expect("parse");
+    assert_eq!(obligation.name, "thm");
+    assert_eq!(obligation.statement, "0 <= x");
+    assert_eq!(obligation.uses, vec!["x".to_owned()]);
+    assert_eq!(obligation.cites, vec!["base".to_owned()]);
+}
+
+#[test]
+fn uses_and_cites_are_optional_and_order_does_not_matter() {
+    let only_cites = mathrel_host::parse_obligation_line("t : P cites a, b").expect("parse");
+    assert!(only_cites.uses.is_empty());
+    assert_eq!(only_cites.cites, vec!["a".to_owned(), "b".to_owned()]);
+
+    let reversed = mathrel_host::parse_obligation_line("t : P cites a uses x").expect("parse");
+    assert_eq!(reversed.statement, "P");
+    assert_eq!(reversed.uses, vec!["x".to_owned()]);
+    assert_eq!(reversed.cites, vec!["a".to_owned()]);
+
+    let bare = mathrel_host::parse_obligation_line("t : 何も付いていない命題").expect("parse");
+    assert_eq!(bare.statement, "何も付いていない命題");
+    assert!(bare.uses.is_empty() && bare.cites.is_empty());
+}
+
+#[test]
+fn a_line_without_a_name_or_statement_is_rejected() {
+    assert!(mathrel_host::parse_obligation_line("命題だけ").is_none());
+    assert!(mathrel_host::parse_obligation_line(" : P").is_none());
+    assert!(mathrel_host::parse_obligation_line("t : ").is_none());
+}

@@ -1,0 +1,7 @@
+[build]
+target = "index.html"
+dist = "../../web"
+
+[serve]
+port = 8080
+open = false

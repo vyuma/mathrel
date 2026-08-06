@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mathrel</title>
+
+    <!--
+      MathLive は数式入力の基盤（企画書 §12）。読み込めなければ画面は素の
+      テキスト入力に落ちる。オフラインでもワークスペースそのものは使える。
+
+      **wasm より先に置くこと。** trunk は起動スクリプトを
+      `<link data-trunk rel="rust">` の位置に差し込む。それは module なので
+      暗黙に defer され、後続の同期スクリプトより後に走る……のではなく、
+      文書順で実行される。したがって wasm の link をこの下に置かないと、
+      カスタム要素の登録前に画面が組み上がり、**初期セルだけ素の入力欄に
+      なる**（実際にそうなった）。defer も付けない。
+    -->
+    <script src="https://cdn.jsdelivr.net/npm/mathlive@0.101.0/dist/mathlive.min.js"></script>
+
+    <link data-trunk rel="rust" data-wasm-opt="s" />
+    <link data-trunk rel="css" href="style.css" />
+  </head>
+  <body></body>
+</html>

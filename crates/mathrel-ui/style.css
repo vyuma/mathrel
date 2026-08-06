@@ -1,0 +1,173 @@
+/* 状態を色で伝える。色だけに頼らず、必ず文字も添える（見分けにくい人がいる）。 */
+:root {
+  --bg: #fbfbfa;
+  --fg: #1f2328;
+  --muted: #6a737d;
+  --line: #e2e2df;
+  --clean: #2da44e;
+  --stale: #bf8700;
+  --error: #cf222e;
+  --cycle: #8250df;
+  --pending: #8c959f;
+  --accent: #0969da;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 0 6rem;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.6 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+
+/* --- 上部 --- */
+
+.top {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.top h1 { margin: 0; font-size: 1.05rem; letter-spacing: 0.02em; }
+.revision { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.85rem; }
+.trustline { margin-left: auto; font-size: 0.85rem; color: var(--clean); }
+.trustline.weak { color: var(--stale); font-weight: 600; }
+
+/* --- 警告 --- */
+
+.warning {
+  margin: 0;
+  padding: 0.9rem 1.25rem;
+  background: #fff8e5;
+  border-bottom: 1px solid #f0d9a0;
+}
+.warning .headline { margin: 0 0 0.5rem; font-weight: 600; }
+.warning ul { margin: 0; padding-left: 1.1rem; }
+.warning li { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
+.warning .cell-ref { font-variant-numeric: tabular-nums; color: var(--muted); }
+.warning .trust { font-weight: 600; color: var(--stale); }
+.warning .culprit { color: var(--accent); }
+.warning .reason { color: var(--muted); }
+.warning .legend { margin: 0.6rem 0 0; font-size: 0.82rem; color: var(--muted); }
+
+/* --- セル --- */
+
+main { padding: 0.5rem 1.25rem; }
+
+.cell {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--pending);
+  border-radius: 6px;
+  background: #fff;
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.75rem;
+}
+.cell.clean { border-left-color: var(--clean); }
+.cell.stale { border-left-color: var(--stale); }
+.cell.error, .cell.unresolved { border-left-color: var(--error); }
+.cell.ambiguous { border-left-color: var(--stale); }
+.cell.cycle { border-left-color: var(--cycle); }
+
+/* 直近の操作で再計算されたものを光らせる。**この道具の主張そのもの**で
+   あり、「1 つ変えたら何が古くなったか」が目に見える唯一の瞬間である。 */
+@keyframes flash {
+  from { background: #ddf4e4; }
+  to   { background: #fff; }
+}
+.cell.recomputed { animation: flash 1.4s ease-out; }
+
+.line { display: flex; align-items: center; gap: 0.6rem; }
+.id { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 2.4rem; }
+.value { color: var(--clean); font-weight: 600; white-space: nowrap; }
+.remove {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  line-height: 1;
+}
+.remove:hover { color: var(--error); }
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: baseline;
+  margin-top: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.badge {
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.75rem;
+}
+.badge.clean { color: var(--clean); }
+.badge.stale, .badge.ambiguous { color: var(--stale); }
+.badge.error, .badge.unresolved { color: var(--error); }
+.badge.cycle { color: var(--cycle); }
+.badge.pending { color: var(--pending); }
+.meta .trust { color: var(--fg); }
+
+/* --- 入力 --- */
+
+.input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+}
+.input:hover { border-color: var(--line); }
+.input:focus { outline: 2px solid var(--accent); outline-offset: -1px; background: #fff; }
+math-field.input { --caret-color: var(--accent); }
+
+.compose {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  background: #fff;
+  border-top: 1px solid var(--line);
+}
+.modes { display: flex; gap: 0.25rem; }
+.mode {
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+}
+.mode.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.compose .draft { border-color: var(--line); background: #fff; }
+.add {
+  font: inherit;
+  padding: 0.35rem 1rem;
+  border: 0;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.note { flex-basis: 100%; margin: 0; color: var(--error); font-size: 0.82rem; }
+.note:empty { display: none; }

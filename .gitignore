@@ -1,2 +1,4 @@
 .codex-out/
 target/
+web/
+crates/mathrel-ui/target/

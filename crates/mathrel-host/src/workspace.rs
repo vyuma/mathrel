@@ -1123,6 +1123,84 @@ impl Workspace {
     }
 }
 
+/// `名前 : 命題 [uses a,b] [cites c,d]` を [`Obligation`] にする。
+///
+/// `uses` / `cites` は省略できる。命題の中に同じ語が現れる場合と区別する
+/// ため、空白で区切られた語として**末尾にあるもの**だけを見る。
+///
+/// 名前と命題の両方が要る。欠けていれば `None`。
+///
+/// ```
+/// use mathrel_host::parse_obligation_line;
+///
+/// let obligation = parse_obligation_line("f_nonneg : 0 <= f t uses f cites base")
+///     .expect("parse");
+/// assert_eq!(obligation.name, "f_nonneg");
+/// assert_eq!(obligation.statement, "0 <= f t");
+/// assert_eq!(obligation.uses, vec!["f".to_owned()]);
+/// assert_eq!(obligation.cites, vec!["base".to_owned()]);
+/// ```
+#[must_use]
+pub fn parse_obligation_line(line: &str) -> Option<Obligation> {
+    let (name, rest) = line.split_once(':')?;
+    let name = name.trim();
+    let (statement, uses, cites) = split_dependencies(rest.trim());
+    if name.is_empty() || statement.is_empty() {
+        return None;
+    }
+    let use_refs: Vec<&str> = uses.iter().map(String::as_str).collect();
+    let cite_refs: Vec<&str> = cites.iter().map(String::as_str).collect();
+    Some(
+        Obligation::new(name, &statement)
+            .using(&use_refs)
+            .citing(&cite_refs),
+    )
+}
+
+/// `<命題> uses a,b cites c,d` を分解する。
+///
+/// `uses` / `cites` は省略できる。命題の中に現れる場合と区別するため、
+/// 空白で区切られた語として末尾にあるものだけを見る。
+fn split_dependencies(rest: &str) -> (String, Vec<String>, Vec<String>) {
+    let mut statement = rest.trim().to_owned();
+    let mut uses = Vec::new();
+    let mut cites = Vec::new();
+
+    // 後ろから順に剥がす。`uses` が先に書かれても `cites` が先でも動く。
+    loop {
+        let lower = statement.to_lowercase();
+        let at_uses = lower.rfind(" uses ");
+        let at_cites = lower.rfind(" cites ");
+        let at = match (at_uses, at_cites) {
+            (Some(u), Some(c)) => u.max(c),
+            (Some(u), None) => u,
+            (None, Some(c)) => c,
+            (None, None) => break,
+        };
+        let (head, tail) = statement.split_at(at);
+        let tail = tail.trim();
+        let (keyword, names) = match tail.split_once(char::is_whitespace) {
+            Some(parts) => parts,
+            None => break,
+        };
+        let parsed: Vec<String> = names
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if keyword.eq_ignore_ascii_case("uses") {
+            uses.splice(0..0, parsed);
+        } else {
+            cites.splice(0..0, parsed);
+        }
+        statement = head.trim_end().to_owned();
+    }
+
+    (statement, uses, cites)
+}
+
+
 fn parse(source: &str) -> (Option<Stmt>, Option<String>) {
     match parse_statement(source) {
         Ok(stmt) => (Some(stmt), None),
