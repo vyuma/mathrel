@@ -44,6 +44,9 @@ while [ $# -gt 0 ]; do
         -o|--out)      out="$2"; shift 2 ;;
         -h|--help)     usage 0 ;;
         --)            shift; break ;;
+        # 裸の `-` は「標準入力から読む」の意味。`-*` より先に置くこと
+        # （後ろに置くと選択肢と誤認され、README の使い方が動かない）。
+        -)             break ;;
         -*)            echo "知らない選択肢: $1" >&2; usage 1 ;;
         *)             break ;;
     esac
