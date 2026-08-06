@@ -208,7 +208,9 @@ impl DependencyGraph {
     /// 解決状態を引く。
     #[must_use]
     pub fn resolution(&self, entity: Entity) -> &Resolution {
-        self.resolution.get(&entity).unwrap_or(&Resolution::Resolved)
+        self.resolution
+            .get(&entity)
+            .unwrap_or(&Resolution::Resolved)
     }
 
     /// 上流（このエンティティが依存している先）。
@@ -507,7 +509,11 @@ mod tests {
         graph.resolve(y);
 
         assert!(graph.resolution(y).is_ambiguous());
-        assert_eq!(graph.upstream(y), vec![a, b], "健全側に倒して両方へ辺を張る");
+        assert_eq!(
+            graph.upstream(y),
+            vec![a, b],
+            "健全側に倒して両方へ辺を張る"
+        );
     }
 
     #[test]

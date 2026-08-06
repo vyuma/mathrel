@@ -432,11 +432,7 @@ impl ProofSpace {
     }
 
     /// 1 件を検証する。カーネルの状態は変えない。
-    fn compute(
-        &self,
-        entity: Entity,
-        verifier: &dyn Verifier,
-    ) -> (EvalOutcome, Option<Verdict>) {
+    fn compute(&self, entity: Entity, verifier: &dyn Verifier) -> (EvalOutcome, Option<Verdict>) {
         let entry = match self.index.get(&entity).and_then(|p| self.entries.get(*p)) {
             Some(entry) => entry,
             None => {
@@ -470,8 +466,11 @@ impl ProofSpace {
             EntryKind::Obligation(obligation) => {
                 let context = self.context_for(entity);
                 let verdict = verifier.verify(obligation, &context);
-                let digest =
-                    obligation.fingerprint(&verifier.backend(), &verdict, &self.upstream_digests(entity));
+                let digest = obligation.fingerprint(
+                    &verifier.backend(),
+                    &verdict,
+                    &self.upstream_digests(entity),
+                );
                 (verdict.to_outcome(digest), Some(verdict))
             }
         }

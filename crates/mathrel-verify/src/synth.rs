@@ -263,7 +263,11 @@ fn fenced_block(text: &str) -> Option<String> {
         if trimmed.starts_with("```") {
             if inside {
                 let joined = body.join("\n").trim().to_owned();
-                return if joined.is_empty() { None } else { Some(joined) };
+                return if joined.is_empty() {
+                    None
+                } else {
+                    Some(joined)
+                };
             }
             inside = true;
             continue;
@@ -398,7 +402,9 @@ mod tests {
             vec![0, 1],
             "2 回目の提案は 1 件の失敗を見ている"
         );
-        assert!(outcome.attempts[0].feedback().contains("unknown identifier"));
+        assert!(outcome.attempts[0]
+            .feedback()
+            .contains("unknown identifier"));
     }
 
     #[test]

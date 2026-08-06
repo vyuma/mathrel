@@ -764,7 +764,10 @@ impl Kernel {
         } else {
             // カットオフ無効時は到達可能な下流をすべて `Dirty` にする。
             // 素朴実装（オラクル）と同じ振る舞いになる。
-            self.graph.reachable_downstream(source).into_iter().collect()
+            self.graph
+                .reachable_downstream(source)
+                .into_iter()
+                .collect()
         };
         for entity in targets {
             if matches!(self.freshness_of(entity), Freshness::MaybeDirty) {

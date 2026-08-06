@@ -569,47 +569,50 @@ fn generators_cover_interesting_states() {
         TestRng::deterministic_rng(RngAlgorithm::ChaCha),
     );
     runner
-        .run(&(workspace_strategy(), 0usize..64), |((capabilities, items), seed)| {
-            bump("total");
-            let mut model = build(capabilities, items);
-            model.evaluate(1);
+        .run(
+            &(workspace_strategy(), 0usize..64),
+            |((capabilities, items), seed)| {
+                bump("total");
+                let mut model = build(capabilities, items);
+                model.evaluate(1);
 
-            let alive = model.oracle.alive();
-            if alive.iter().any(|index| model.oracle.is_in_cycle(*index)) {
-                bump("cycle");
-            }
-            if alive.iter().any(|index| model.oracle.is_unresolved(*index)) {
-                bump("unresolved");
-            }
-            if alive.iter().any(|index| {
-                model
-                    .entity(*index)
-                    .and_then(|entity| model.kernel.resolution(entity).ok())
-                    .map(|resolution| resolution.is_ambiguous())
-                    .unwrap_or(false)
-            }) {
-                bump("ambiguous");
-            }
+                let alive = model.oracle.alive();
+                if alive.iter().any(|index| model.oracle.is_in_cycle(*index)) {
+                    bump("cycle");
+                }
+                if alive.iter().any(|index| model.oracle.is_unresolved(*index)) {
+                    bump("unresolved");
+                }
+                if alive.iter().any(|index| {
+                    model
+                        .entity(*index)
+                        .and_then(|entity| model.kernel.resolution(entity).ok())
+                        .map(|resolution| resolution.is_ambiguous())
+                        .unwrap_or(false)
+                }) {
+                    bump("ambiguous");
+                }
 
-            let clean = model.clean_indices();
-            if let Some(target) = pick(&clean, seed) {
-                let reachable: BTreeSet<usize> = model
-                    .oracle
-                    .stale_after_change(target)
-                    .into_iter()
-                    .filter(|index| clean.contains(index))
-                    .collect();
-                let direct: BTreeSet<usize> =
-                    model.oracle.downstream(target).into_iter().collect();
-                if !reachable.is_empty() {
-                    bump("direct_downstream");
+                let clean = model.clean_indices();
+                if let Some(target) = pick(&clean, seed) {
+                    let reachable: BTreeSet<usize> = model
+                        .oracle
+                        .stale_after_change(target)
+                        .into_iter()
+                        .filter(|index| clean.contains(index))
+                        .collect();
+                    let direct: BTreeSet<usize> =
+                        model.oracle.downstream(target).into_iter().collect();
+                    if !reachable.is_empty() {
+                        bump("direct_downstream");
+                    }
+                    if reachable.difference(&direct).next().is_some() {
+                        bump("indirect_downstream");
+                    }
                 }
-                if reachable.difference(&direct).next().is_some() {
-                    bump("indirect_downstream");
-                }
-            }
-            Ok(())
-        })
+                Ok(())
+            },
+        )
         .expect("生成のみ。失敗する経路はない");
 
     let count = |name: &str| {

@@ -370,9 +370,7 @@ impl Model {
     }
 
     pub fn index_of(&self, entity: Entity) -> Option<usize> {
-        self.entities
-            .iter()
-            .position(|slot| *slot == Some(entity))
+        self.entities.iter().position(|slot| *slot == Some(entity))
     }
 
     /// 現在 `Clean` な項目の添字。

@@ -141,12 +141,12 @@ where
     while let Some(index) = rest.find(&needle) {
         output.push_str(&rest[..index]);
         let after = &rest[index + needle.len()..];
-        match (take_braced(after), take_braced(after).and_then(|(_, tail)| take_braced(tail))) {
+        match (
+            take_braced(after),
+            take_braced(after).and_then(|(_, tail)| take_braced(tail)),
+        ) {
             (Some((first, _)), Some((second, tail))) => {
-                output.push_str(&build(
-                    &normalize_latex(first),
-                    &normalize_latex(second),
-                ));
+                output.push_str(&build(&normalize_latex(first), &normalize_latex(second)));
                 rest = tail;
             }
             _ => {
@@ -318,8 +318,7 @@ fn tokenize(input: &str) -> Result<Vec<(usize, Token)>, ParseError> {
             }
             c if c.is_ascii_digit() || c == '.' => {
                 let mut text = String::new();
-                while index < bytes.len()
-                    && (bytes[index].is_ascii_digit() || bytes[index] == '.')
+                while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == '.')
                 {
                     text.push(bytes[index]);
                     index += 1;
@@ -353,8 +352,7 @@ fn tokenize(input: &str) -> Result<Vec<(usize, Token)>, ParseError> {
                 if c == '\\' {
                     index += 1;
                 }
-                while index < bytes.len()
-                    && (bytes[index].is_alphanumeric() || bytes[index] == '_')
+                while index < bytes.len() && (bytes[index].is_alphanumeric() || bytes[index] == '_')
                 {
                     text.push(bytes[index]);
                     index += 1;
@@ -402,7 +400,10 @@ impl Parser {
             self.cursor += 1;
             Ok(())
         } else {
-            Err(ParseError::new(format!("{what} が必要です"), self.position()))
+            Err(ParseError::new(
+                format!("{what} が必要です"),
+                self.position(),
+            ))
         }
     }
 
@@ -639,13 +640,13 @@ pub fn parse_statement(input: &str) -> Result<Stmt, ParseError> {
     }
 
     // 無名の式。
-    let mut parser = Parser {
-        tokens,
-        cursor: 0,
-    };
+    let mut parser = Parser { tokens, cursor: 0 };
     let body = parser.parse_expr()?;
     if !parser.at_end() {
-        return Err(ParseError::new("式に余分なものがあります", parser.position()));
+        return Err(ParseError::new(
+            "式に余分なものがあります",
+            parser.position(),
+        ));
     }
     Ok(Stmt::Anonymous { body })
 }
@@ -755,10 +756,7 @@ mod tests {
     #[test]
     fn vector_literal_parses() {
         let stmt = parse_statement("v = [1, 2, 3]").expect("parse");
-        assert_eq!(
-            stmt.body().expect("body").canonical(),
-            "[#1.0,#2.0,#3.0]"
-        );
+        assert_eq!(stmt.body().expect("body").canonical(), "[#1.0,#2.0,#3.0]");
     }
 
     #[test]

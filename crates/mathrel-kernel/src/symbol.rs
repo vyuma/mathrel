@@ -42,7 +42,9 @@ impl SymbolInterner {
     /// 登録済みの文字列を引く。
     #[must_use]
     pub fn resolve(&self, symbol: Symbol) -> Option<&str> {
-        self.entries.get_index(symbol.0 as usize).map(String::as_str)
+        self.entries
+            .get_index(symbol.0 as usize)
+            .map(String::as_str)
     }
 
     /// 登録済みの文字列を引く。未登録なら `"<unknown>"`。

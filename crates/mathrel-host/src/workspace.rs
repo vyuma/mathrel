@@ -317,11 +317,8 @@ impl Workspace {
                 // 関数定義の指紋は、本体の形と、その本体が参照している上流の
                 // 指紋から作る。自由変数 `c` が変われば f の指紋も変わり、
                 // f を使うセルへ dirty が伝わる。
-                let mut parts: Vec<String> = vec![
-                    "func".to_owned(),
-                    params.join(","),
-                    body.canonical(),
-                ];
+                let mut parts: Vec<String> =
+                    vec!["func".to_owned(), params.join(","), body.canonical()];
                 for upstream in self.kernel.dependencies(entity).unwrap_or_default() {
                     parts.push(self.upstream_fingerprint(upstream));
                 }
@@ -355,7 +352,9 @@ impl Workspace {
 
     fn upstream_fingerprint(&self, entity: Entity) -> String {
         match self.kernel.freshness(entity) {
-            Ok(Freshness::Clean { digest, .. }) => digest.iter().map(|b| format!("{b:02x}")).collect(),
+            Ok(Freshness::Clean { digest, .. }) => {
+                digest.iter().map(|b| format!("{b:02x}")).collect()
+            }
             _ => "?".to_owned(),
         }
     }
@@ -389,7 +388,9 @@ impl Workspace {
             match &cell.stmt {
                 Some(Stmt::ValueDef { name, .. }) => {
                     if let Some(value) = self.values.get(&current) {
-                        env.values.entry(name.clone()).or_insert_with(|| value.clone());
+                        env.values
+                            .entry(name.clone())
+                            .or_insert_with(|| value.clone());
                     }
                 }
                 Some(Stmt::FuncDef { name, params, body }) => {
@@ -494,7 +495,9 @@ impl Workspace {
             .collect();
 
         let value = self.value(cell.id).map(Value::render);
-        let value_type = self.value(cell.id).map(|value| value.type_name().to_owned());
+        let value_type = self
+            .value(cell.id)
+            .map(|value| value.type_name().to_owned());
         let failure = self
             .kernel
             .failure(entity)
@@ -506,17 +509,11 @@ impl Workspace {
         Object::new()
             .number("id", cell.id as f64)
             .string("source", &cell.source)
-            .string(
-                "kind",
-                cell.stmt.as_ref().map_or("invalid", Stmt::kind_str),
-            )
+            .string("kind", cell.stmt.as_ref().map_or("invalid", Stmt::kind_str))
             .optional_string("name", cell.stmt.as_ref().and_then(Stmt::declared_name))
             .string("freshness", freshness)
             .string("resolution", resolution.kind_str())
-            .boolean(
-                "inCycle",
-                self.kernel.in_cycle(entity).unwrap_or(false),
-            )
+            .boolean("inCycle", self.kernel.in_cycle(entity).unwrap_or(false))
             .optional_string("value", value.as_deref())
             .optional_string("valueType", value_type.as_deref())
             .optional_string("error", failure.as_deref())

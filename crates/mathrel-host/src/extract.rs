@@ -200,7 +200,9 @@ mod tests {
     #[test]
     fn norm_of_a_bare_name_also_requires_its_type() {
         let spec = relations("n = norm(v)");
-        assert!(spec.requires.contains(&CapabilitySpec::NameBound("v".into())));
+        assert!(spec
+            .requires
+            .contains(&CapabilitySpec::NameBound("v".into())));
         assert!(spec
             .requires
             .contains(&CapabilitySpec::TypeKnown("v".into())));

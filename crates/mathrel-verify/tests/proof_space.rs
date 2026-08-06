@@ -7,7 +7,7 @@
 //! 3. 信頼度が依存に沿って正しく落ちること（ADR-008）
 
 use mathrel_verify::{
-    BackendId, Obligation, ProofSpace, Trust, TrivialVerifier, Verdict, Verifier,
+    BackendId, Obligation, ProofSpace, TrivialVerifier, Trust, Verdict, Verifier,
 };
 use std::cell::RefCell;
 
@@ -266,9 +266,10 @@ fn rewriting_a_definition_to_the_same_text_rechecks_nothing() {
         verifier.calls()
     );
     assert_eq!(stats.proved(), 0);
-    assert_eq!(space.effective_trust(
-        space.entry_named("main").expect("定理").entity
-    ), Trust::Checked);
+    assert_eq!(
+        space.effective_trust(space.entry_named("main").expect("定理").entity),
+        Trust::Checked
+    );
 }
 
 /// 定義の中身が変われば、依存する証明は再検査される。
@@ -417,9 +418,7 @@ fn the_stats_separate_checked_from_assumed() {
 fn a_definition_cannot_smuggle_in_an_axiom() {
     let mut space = ProofSpace::new();
     space.add_definition("sneaky", "axiom everything : False");
-    let theorem = space.add_obligation(
-        Obligation::new("thm", "a = a").using(&["sneaky"]),
-    );
+    let theorem = space.add_obligation(Obligation::new("thm", "a = a").using(&["sneaky"]));
     space.verify_all(&TrivialVerifier);
 
     assert_eq!(space.own_trust(theorem), Trust::Checked, "自分は検査済み");
@@ -491,9 +490,9 @@ fn weakness_propagates_the_whole_way_down() {
     let mut entities = Vec::new();
     for index in 1..5 {
         let name = format!("l{index}");
-        entities.push(space.add_obligation(
-            Obligation::new(&name, "Q = Q").citing(&[previous.as_str()]),
-        ));
+        entities.push(
+            space.add_obligation(Obligation::new(&name, "Q = Q").citing(&[previous.as_str()])),
+        );
         previous = name;
     }
     space.verify_all(&TrivialVerifier);

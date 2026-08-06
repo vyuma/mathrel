@@ -74,7 +74,9 @@ pub mod relation;
 pub mod state;
 pub mod symbol;
 
-pub use component::{ComponentStore, Decl, DeclKind, DisplayHint, Expr, MapStore, Source, TypeInfo};
+pub use component::{
+    ComponentStore, Decl, DeclKind, DisplayHint, Expr, MapStore, Source, TypeInfo,
+};
 pub use entity::{Entity, EntityAllocator};
 pub use error::{KernelError, KernelResult};
 pub use graph::DependencyGraph;

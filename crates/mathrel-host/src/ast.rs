@@ -123,9 +123,9 @@ impl Stmt {
     #[must_use]
     pub fn body(&self) -> Option<&Ast> {
         match self {
-            Stmt::ValueDef { body, .. }
-            | Stmt::FuncDef { body, .. }
-            | Stmt::Anonymous { body } => Some(body),
+            Stmt::ValueDef { body, .. } | Stmt::FuncDef { body, .. } | Stmt::Anonymous { body } => {
+                Some(body)
+            }
             Stmt::TypeDecl { .. } => None,
         }
     }

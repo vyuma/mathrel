@@ -243,7 +243,9 @@ fn apply_builtin(
             if a.len() != b.len() {
                 return Err(EvalError::new("dot は同じ長さのベクトルにだけ使えます"));
             }
-            Ok(Value::Scalar(a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()))
+            Ok(Value::Scalar(
+                a.iter().zip(b.iter()).map(|(x, y)| x * y).sum(),
+            ))
         }
 
         (_, [Value::Scalar(x)]) => {
@@ -400,10 +402,7 @@ mod tests {
             .insert("u".to_owned(), Value::Vector(vec![1.0, 2.0]));
         env.values
             .insert("w".to_owned(), Value::Vector(vec![3.0, 4.0]));
-        assert_eq!(
-            eval_text("u + w", &env),
-            Ok(Value::Vector(vec![4.0, 6.0]))
-        );
+        assert_eq!(eval_text("u + w", &env), Ok(Value::Vector(vec![4.0, 6.0])));
         assert_eq!(eval_text("dot(u, w)", &env), Ok(Value::Scalar(11.0)));
         assert!(eval_text("u * w", &env).is_err());
     }

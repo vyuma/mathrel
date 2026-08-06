@@ -1,4 +1,4 @@
-//! T01〜T14 — カーネル v0.1 のシナリオテスト。
+//! T01〜T15 — カーネル v0.1 のシナリオテスト。
 //!
 //! 企画書 §8 の P0 完了条件のひとつ。各テストは「利用者から見て何が起きるか」
 //! を 1 つずつ固定する。番号は要件定義書のシナリオ ID に対応する。
@@ -9,9 +9,7 @@
 
 mod support;
 
-use mathrel_kernel::{
-    Capability, EvalOutcome, Freshness, Kernel, KernelError, ValueUpdate,
-};
+use mathrel_kernel::{Capability, EvalOutcome, Freshness, Kernel, KernelError, ValueUpdate};
 use support::{add_function, add_value, digest_for, evaluate_all, func_bound, name_bound};
 
 /// 鮮度を短い文字列で見る。`assert_eq!` の失敗表示を読みやすくするため。
@@ -527,7 +525,10 @@ fn t15_proof_obligations_live_in_the_same_graph_as_values() {
         .expect("change");
     assert!(report.newly_dirty.contains(&f), "定義が古くなる");
     assert!(report.newly_maybe_dirty.contains(&lemma), "補題も古くなる");
-    assert!(report.newly_maybe_dirty.contains(&theorem), "定理も古くなる");
+    assert!(
+        report.newly_maybe_dirty.contains(&theorem),
+        "定理も古くなる"
+    );
 
     // 証明の再検査は高価なので、早期カットオフが効くことが本質である。
     // c の指紋が変わらなければ、補題も定理も再検査されない。
@@ -656,7 +657,10 @@ fn gaining_an_upstream_while_staying_ambiguous_still_dirties() {
         "Clean",
         "新しい上流を得た以上、Clean のままではいられない"
     );
-    assert!(kernel.in_cycle(b).expect("循環判定"), "b と third は循環する");
+    assert!(
+        kernel.in_cycle(b).expect("循環判定"),
+        "b と third は循環する"
+    );
     assert!(kernel.in_cycle(third).expect("循環判定"));
     assert!(kernel.check_invariants().is_empty());
 }
@@ -687,5 +691,8 @@ fn capability_labels_are_readable() {
     assert_eq!(kernel.capability_label(value), "NameBound(x)");
     assert_eq!(kernel.capability_label(function), "FunctionBound(f/2)");
     assert_eq!(kernel.capability_label(type_known), "TypeKnown(T)");
-    assert_eq!(Capability::NameBound(kernel.intern("x")).kind_str(), "NameBound");
+    assert_eq!(
+        Capability::NameBound(kernel.intern("x")).kind_str(),
+        "NameBound"
+    );
 }

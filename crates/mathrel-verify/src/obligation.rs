@@ -60,14 +60,16 @@ impl Obligation {
     /// 引用する命題を足す。
     #[must_use]
     pub fn citing(mut self, names: &[&str]) -> Self {
-        self.cites.extend(names.iter().map(|name| (*name).to_owned()));
+        self.cites
+            .extend(names.iter().map(|name| (*name).to_owned()));
         self
     }
 
     /// 参照する定義を足す。
     #[must_use]
     pub fn using(mut self, names: &[&str]) -> Self {
-        self.uses.extend(names.iter().map(|name| (*name).to_owned()));
+        self.uses
+            .extend(names.iter().map(|name| (*name).to_owned()));
         self
     }
 

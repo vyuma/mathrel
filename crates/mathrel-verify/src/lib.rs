@@ -78,7 +78,9 @@ pub use lean::LeanVerifier;
 pub use obligation::{BackendId, Obligation};
 pub use runner::{CommandOutput, CommandRunner, ProcessRunner, RunError, ScriptedRunner};
 pub use space::{backend_label, Entry, EntryKind, ProofSpace, VerifyStats};
-pub use synth::{repair, Attempt, CodexSynthesizer, ProofSynthesizer, RepairOutcome, ScriptedSynthesizer};
+pub use synth::{
+    repair, Attempt, CodexSynthesizer, ProofSynthesizer, RepairOutcome, ScriptedSynthesizer,
+};
 pub use trust::Trust;
 pub use verdict::Verdict;
 pub use verifier::{TrivialVerifier, Verifier};

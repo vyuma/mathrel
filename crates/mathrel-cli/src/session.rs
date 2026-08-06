@@ -5,7 +5,7 @@
 
 use mathrel_host::Workspace;
 use mathrel_kernel::Freshness;
-use mathrel_verify::{Obligation, ProofSpace, Trust, TrivialVerifier};
+use mathrel_verify::{Obligation, ProofSpace, TrivialVerifier, Trust};
 
 /// 1 行の入力に対する応答。
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -85,9 +85,7 @@ impl Session {
             ":assume" => self.add_obligation(rest, true),
             ":verify" => Response::of(self.verify()),
             ":demo" => Response::of(self.demo()),
-            other => Response::line(format!(
-                "知らない命令です: {other}（:help で一覧）"
-            )),
+            other => Response::line(format!("知らない命令です: {other}（:help で一覧）")),
         }
     }
 
@@ -348,9 +346,7 @@ impl Session {
         }
         lines.push("> :set 1 x = 3".to_owned());
         lines.extend(self.handle(":set 1 x = 3").lines);
-        lines.push(
-            "  ↑ x だけを変えた。再計算されたのは y だけで、f は触っていない。".to_owned(),
-        );
+        lines.push("  ↑ x だけを変えた。再計算されたのは y だけで、f は触っていない。".to_owned());
         lines
     }
 
@@ -427,10 +423,7 @@ mod tests {
             output.contains("再計算: [3]"),
             "y だけが再計算される: {output}"
         );
-        assert!(
-            !output.contains("[2]"),
-            "f は再計算されない: {output}"
-        );
+        assert!(!output.contains("[2]"), "f は再計算されない: {output}");
         assert!(run(&mut session, ":list").contains("→ 10"));
     }
 
@@ -451,10 +444,7 @@ mod tests {
             output.contains("再計算: [2]"),
             "直接下流は 1 回動く: {output}"
         );
-        assert!(
-            !output.contains("[3]"),
-            "2 段目より先は動かない: {output}"
-        );
+        assert!(!output.contains("[3]"), "2 段目より先は動かない: {output}");
     }
 
     /// 値が変われば末端まで届く。
@@ -596,7 +586,16 @@ mod tests {
     #[test]
     fn malformed_commands_do_not_panic() {
         let mut session = Session::new();
-        for line in [":set", ":set abc", ":set 1", ":del", ":del x", ":deps", ":thm", ":assume oops"] {
+        for line in [
+            ":set",
+            ":set abc",
+            ":set 1",
+            ":del",
+            ":del x",
+            ":deps",
+            ":thm",
+            ":assume oops",
+        ] {
             let response = session.handle(line);
             assert!(!response.lines.is_empty(), "{line} に応答がない");
             assert!(!response.quit);

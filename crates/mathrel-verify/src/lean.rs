@@ -156,10 +156,7 @@ impl<R: CommandRunner> LeanVerifier<R> {
     /// [`Trust::Checked`] は**条件を全部並べた上での結論**にしてある。判定が
     /// 壊れたときに信頼度が上がる側へ倒れないようにするためである。
     #[must_use]
-    pub fn interpret(
-        result: &Result<CommandOutput, RunError>,
-        proof_supplied: bool,
-    ) -> Verdict {
+    pub fn interpret(result: &Result<CommandOutput, RunError>, proof_supplied: bool) -> Verdict {
         let output = match result {
             Ok(output) => output,
             Err(RunError::NotFound(program)) => {
@@ -186,9 +183,8 @@ impl<R: CommandRunner> LeanVerifier<R> {
             };
         }
 
-        let checked = proof_supplied
-            && !uses_sorry_axiom(&combined)
-            && !combined.contains(SORRY_WARNING);
+        let checked =
+            proof_supplied && !uses_sorry_axiom(&combined) && !combined.contains(SORRY_WARNING);
 
         Verdict::Proved {
             trust: if checked {
@@ -298,9 +294,10 @@ mod tests {
 
     #[test]
     fn the_source_contains_preamble_context_and_theorem_in_order() {
-        let verifier = LeanVerifier::new(ScriptedRunner::default(), "4.8.0")
-            .with_preamble("import Mathlib");
-        let source = verifier.render_source(&obligation(), &["def f (t : ℝ) : ℝ := t^2".to_owned()]);
+        let verifier =
+            LeanVerifier::new(ScriptedRunner::default(), "4.8.0").with_preamble("import Mathlib");
+        let source =
+            verifier.render_source(&obligation(), &["def f (t : ℝ) : ℝ := t^2".to_owned()]);
 
         let preamble = source.find("import").expect("preamble");
         let context = source.find("def f").expect("context");
@@ -314,7 +311,10 @@ mod tests {
     fn the_source_asks_lean_for_the_axiom_dependencies() {
         let verifier = LeanVerifier::new(ScriptedRunner::default(), "4.8.0");
         let source = verifier.render_source(&obligation(), &[]);
-        assert!(source.trim_end().ends_with("#print axioms f_nonneg"), "{source}");
+        assert!(
+            source.trim_end().ends_with("#print axioms f_nonneg"),
+            "{source}"
+        );
     }
 
     #[test]
@@ -339,7 +339,8 @@ mod tests {
         assert_eq!(calls[0].1[..2], ["env".to_owned(), "lean".to_owned()]);
         assert!(
             calls[0].1.last().expect("パス").ends_with(".lean"),
-            "{:?}", calls[0].1
+            "{:?}",
+            calls[0].1
         );
         assert_eq!(calls[0].2, "", "標準入力は使わない");
 
@@ -436,7 +437,10 @@ mod tests {
         let verdict = LeanVerifier::<ScriptedRunner>::interpret(&output, true);
         assert_eq!(verdict.kind_str(), "Refuted");
         assert!(
-            verdict.reason().expect("理由").contains("unknown identifier"),
+            verdict
+                .reason()
+                .expect("理由")
+                .contains("unknown identifier"),
             "AI に差し戻せるだけの情報を残す"
         );
     }
@@ -472,8 +476,8 @@ mod tests {
     #[test]
     fn an_unwritable_workdir_is_unavailable() {
         let runner = ScriptedRunner::new(vec![ok("")]);
-        let verifier = LeanVerifier::new(runner, "4.8.0")
-            .with_workdir("/proc/mathrel-does-not-exist");
+        let verifier =
+            LeanVerifier::new(runner, "4.8.0").with_workdir("/proc/mathrel-does-not-exist");
         let verdict = verifier.verify(&obligation(), &[]);
         assert!(verdict.is_unavailable(), "{verdict:?}");
         assert!(verifier.runner.calls().is_empty(), "起動まで行かない");
@@ -487,7 +491,10 @@ mod tests {
             .join("\n");
         let combined = format!("{noise}\nCheck.lean:1:0: error: 本題\nmore");
         let excerpt = first_error(&combined);
-        assert!(excerpt.starts_with("Check.lean:1:0: error: 本題"), "{excerpt}");
+        assert!(
+            excerpt.starts_with("Check.lean:1:0: error: 本題"),
+            "{excerpt}"
+        );
         assert!(!excerpt.contains("building 0"));
     }
 
@@ -505,8 +512,7 @@ mod tests {
 
     #[test]
     fn the_backend_id_carries_the_declared_version() {
-        let verifier =
-            LeanVerifier::new(ScriptedRunner::default(), "4.8.0+mathlib@deadbeef");
+        let verifier = LeanVerifier::new(ScriptedRunner::default(), "4.8.0+mathlib@deadbeef");
         assert_eq!(verifier.backend().id, "lean4");
         assert_eq!(verifier.backend().version, "4.8.0+mathlib@deadbeef");
     }
