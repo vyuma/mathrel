@@ -1,25 +1,47 @@
-/* 状態を色で伝える。色だけに頼らず、必ず文字も添える（見分けにくい人がいる）。 */
+/* 状態を色で伝える。色だけに頼らず、必ず文字も添える（見分けにくい人がいる）。
+   テキストに使う色は白地 4.5:1 以上（WCAG AA、#46 に実測値の表がある）。 */
 :root {
   --bg: #fbfbfa;
   --fg: #1f2328;
-  --muted: #6a737d;
+  --muted: #6a737d;    /* 4.82:1 */
   --line: #e2e2df;
-  --clean: #2da44e;
-  --stale: #bf8700;
-  --error: #cf222e;
-  --cycle: #8250df;
-  --pending: #8c959f;
-  --accent: #0969da;
+  --clean: #1a7f37;    /* 5.08:1（旧 #2da44e は 3.22 で不合格） */
+  --stale: #9a6700;    /* 4.87:1（旧 #bf8700 は 3.14 で不合格） */
+  --error: #cf222e;    /* 5.36:1 */
+  --cycle: #8250df;    /* 5.05:1 */
+  --pending: #6a737d;  /* 4.82:1（旧 #8c959f は 3.04 で不合格） */
+  --accent: #0969da;   /* 5.19:1 */
+  --warn-bg: #fff8e5;
+  --warn-line: #f0d9a0;
+  --good-bg: #e9f5ec;
+  --info-bg: #eef4fc;
 }
 
 * { box-sizing: border-box; }
 
+html { scroll-behavior: smooth; }
+
 body {
   margin: 0;
-  padding: 0 0 6rem;
+  padding: 0 0 11rem;
   background: var(--bg);
   color: var(--fg);
   font: 15px/1.6 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+
+/* 操作できるものにはフォーカスの輪郭を必ず出す（WCAG 2.4.7）。 */
+button:focus-visible,
+a:focus-visible,
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 前庭障害・注意特性への配慮。動きに頼った合図はここで消える。
+   消えても情報が失われないよう、再計算はチップとニュース行が持つ（#43）。 */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .cell.recomputed { animation: none; }
 }
 
 /* --- 上部 --- */
@@ -37,16 +59,29 @@ body {
 }
 .top h1 { margin: 0; font-size: 1.05rem; letter-spacing: 0.02em; }
 .revision { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.85rem; }
-.trustline { margin-left: auto; font-size: 0.85rem; color: var(--clean); }
+
+/* 常設の総量表示。警告バナーは変化の瞬間だけなので、総量はここが持つ（#42）。 */
+.trustline {
+  margin-left: auto;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--clean);
+  background: transparent;
+  border: 0;
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.trustline:hover { background: var(--bg); text-decoration: underline; }
 .trustline.weak { color: var(--stale); font-weight: 600; }
 
-/* --- 警告 --- */
+/* --- 内訳（ヘッダから開いたときだけ） --- */
 
 .warning {
   margin: 0;
   padding: 0.9rem 1.25rem;
-  background: #fff8e5;
-  border-bottom: 1px solid #f0d9a0;
+  background: var(--warn-bg);
+  border-bottom: 1px solid var(--warn-line);
 }
 .warning .headline { margin: 0 0 0.5rem; font-weight: 600; }
 .warning ul { margin: 0; padding-left: 1.1rem; }
@@ -75,8 +110,12 @@ main { padding: 0.5rem 1.25rem; }
 .cell.ambiguous { border-left-color: var(--stale); }
 .cell.cycle { border-left-color: var(--cycle); }
 
-/* 直近の操作で再計算されたものを光らせる。**この道具の主張そのもの**で
-   あり、「1 つ変えたら何が古くなったか」が目に見える唯一の瞬間である。 */
+/* 依存リンクで飛んできた着地先を光らせる。`:target` は次の移動まで残るので、
+   「どこに飛んだか」を見失わない。 */
+.cell:target { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* 直近の操作で再計算されたものを光らせる。ただしこのフラッシュは 1.4 秒で
+   消える**補助**であり、証拠はチップとニュース行が持つ（変化盲、#43）。 */
 @keyframes flash {
   from { background: #ddf4e4; }
   to   { background: #fff; }
@@ -86,16 +125,46 @@ main { padding: 0.5rem 1.25rem; }
 .line { display: flex; align-items: center; gap: 0.6rem; }
 .id { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 2.4rem; }
 .value { color: var(--clean); font-weight: 600; white-space: nowrap; }
+
+.chip {
+  font-size: 0.72rem;
+  color: var(--accent);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0 0.45rem;
+  white-space: nowrap;
+}
+
+.tools { margin-left: auto; display: flex; gap: 0.25rem; align-items: center; }
+
+/* 破壊的操作の目標は 24×24px 以上（WCAG 2.5.8、Fitts）。取り消しは
+   ニュース行の「元に戻す」が受け持つ（#45）。 */
 .remove {
-  margin-left: auto;
   border: 0;
   background: transparent;
   color: var(--muted);
   font-size: 1.1rem;
   cursor: pointer;
   line-height: 1;
+  padding: 0.25rem 0.55rem;
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 4px;
 }
-.remove:hover { color: var(--error); }
+.remove:hover { color: var(--error); background: #ffebe9; }
+
+.disclose {
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+  min-height: 24px;
+  cursor: pointer;
+}
+.disclose:hover { color: var(--fg); border-color: var(--muted); }
 
 .meta {
   display: flex;
@@ -118,6 +187,50 @@ main { padding: 0.5rem 1.25rem; }
 .badge.cycle { color: var(--cycle); }
 .badge.pending { color: var(--pending); }
 .meta .trust { color: var(--fg); }
+
+/* 依存は名前で読ませる（再認 > 想起、#44）。 */
+.links .link, .news .link {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px dotted currentColor;
+  margin-right: 0.35rem;
+}
+.links .link:hover, .news .link:hover { border-bottom-style: solid; }
+
+/* --- ニュース（変化の通知。次の操作まで残る） --- */
+
+.news {
+  flex-basis: 100%;
+  margin: 0 0 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.news-item {
+  margin: 0;
+  padding: 0.35rem 0.6rem;
+  border-left: 3px solid var(--line);
+  border-radius: 0 4px 4px 0;
+  font-size: 0.88rem;
+}
+.news-item.warn { border-left-color: var(--stale); background: var(--warn-bg); }
+.news-item.info { border-left-color: var(--accent); background: var(--info-bg); }
+.news-item.good { border-left-color: var(--clean); background: var(--good-bg); }
+.news-item.plain { border-left-color: var(--line); background: var(--bg); }
+
+.undo, .offer {
+  font: inherit;
+  font-size: 0.82rem;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.6rem;
+  min-height: 24px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--accent);
+  cursor: pointer;
+}
+.undo:hover, .offer:hover { background: var(--info-bg); }
 
 /* --- 入力 --- */
 
@@ -147,11 +260,19 @@ math-field.input { --caret-color: var(--accent); }
   background: #fff;
   border-top: 1px solid var(--line);
 }
+.compose-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  flex-basis: 100%;
+}
 .modes { display: flex; gap: 0.25rem; }
 .mode {
   font: inherit;
   font-size: 0.82rem;
   padding: 0.2rem 0.6rem;
+  min-height: 24px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: #fff;
@@ -159,15 +280,24 @@ math-field.input { --caret-color: var(--accent); }
   cursor: pointer;
 }
 .mode.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+/* モードは注視点（入力欄）に出す。枠色が「いま何として追加されるか」を言う。
+   説明の本文は .helper が持つ（モードエラー対策、#47）。 */
 .compose .draft { border-color: var(--line); background: #fff; }
+.compose .draft.mode-thm { border-color: var(--cycle); }
+.compose .draft.mode-assume { border-color: var(--stale); }
+
 .add {
   font: inherit;
   padding: 0.35rem 1rem;
+  min-height: 28px;
   border: 0;
   border-radius: 4px;
   background: var(--accent);
   color: #fff;
   cursor: pointer;
 }
+
+.helper { flex-basis: 100%; margin: 0; font-size: 0.78rem; color: var(--muted); }
 .note { flex-basis: 100%; margin: 0; color: var(--error); font-size: 0.82rem; }
 .note:empty { display: none; }

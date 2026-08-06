@@ -4,14 +4,29 @@
 //! テストできる**（`cargo test -p mathrel-ui`）。UI のバグの大半は「何を
 //! 見せるか」の判断ミスであって、要素の組み立てではない。判断はここに集める。
 
-use mathrel_host::{CellId, CellKind, Workspace};
+use mathrel_host::{CellId, CellKind, Stmt, Workspace};
 use mathrel_verify::Trust;
+
+/// 依存 1 本の見え方。
+///
+/// 番号ではなく**提供している名前**で読ませる。番号は「3 番は何だったか」の
+/// 想起を要求するが、名前なら再認で済む（再認 > 想起）。名前のないセル
+/// （無名式など）は番号表示に落ちる。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LinkView {
+    /// 先方のセル。
+    pub id: CellId,
+    /// 表示名。名前が無ければ `[n]`。
+    pub label: String,
+}
 
 /// セル 1 つの見え方。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CellView {
     /// 識別子。
     pub id: CellId,
+    /// 提供している名前。無名式には無い。
+    pub name: Option<String>,
     /// 入力された原文字列。
     pub source: String,
     /// 検証義務か。
@@ -24,10 +39,10 @@ pub struct CellView {
     pub trust: Trust,
     /// 上流を畳み込んだ信頼度。**利用者に見せるべきはこちら。**
     pub effective_trust: Trust,
-    /// 依存先のセル番号。
-    pub dependencies: Vec<CellId>,
-    /// 依存元のセル番号。
-    pub dependents: Vec<CellId>,
+    /// 依存先。
+    pub dependencies: Vec<LinkView>,
+    /// 依存元。
+    pub dependents: Vec<LinkView>,
     /// 直近の操作で再計算されたか。
     pub recomputed: bool,
 }
@@ -41,6 +56,18 @@ impl CellView {
         } else {
             format!("{} → 実効 {}", self.trust.label(), self.effective_trust)
         }
+    }
+
+    /// 既定で畳んでよいほど「静か」か。
+    ///
+    /// 静か = 最新で、実効信頼度が満点で、義務でもない。異常・義務・上流に
+    /// 引きずられているものはニュースであり、畳んではならない。**展開されて
+    /// いること自体が異常の信号**になる（段階的開示）。
+    #[must_use]
+    pub fn is_quiet(&self) -> bool {
+        !self.is_obligation
+            && self.status.tone == Tone::Clean
+            && self.effective_trust == Trust::Checked
     }
 }
 
@@ -106,6 +133,90 @@ pub struct WeakLinkView {
     pub reason: String,
 }
 
+/// 直近の操作で実効信頼度が動いた、というニュース。
+///
+/// 常時表示の警告は慣化して壁紙になる（警報疲れ）。見せるべきは状態ではなく
+/// **変化**である（`docs/検証層の設計.md` §7.1.1）。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct TrustChange {
+    /// 対象のセル。
+    pub id: CellId,
+    /// 対象の表示名。
+    pub label: String,
+    /// 直前の実効信頼度。このセルが新規なら `None`。
+    pub from: Option<Trust>,
+    /// いまの実効信頼度。
+    pub to: Trust,
+    /// 引き下げている原因（満点でないときだけ）。
+    pub culprit: Option<CellId>,
+    /// なぜ満点にならないのか（満点でないときだけ）。
+    pub reason: String,
+}
+
+/// 変化の向き。表示の調子と並び順を決める。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TrustShift {
+    /// 下がった。警告調で最初に出す。
+    Drop,
+    /// 弱いまま新しく増えた。情報調。
+    NewWeak,
+    /// 上がった。肯定調で最後に出す。
+    Recovery,
+}
+
+impl TrustChange {
+    /// 変化の向き。
+    #[must_use]
+    pub fn shift(&self) -> TrustShift {
+        match self.from {
+            None => TrustShift::NewWeak,
+            Some(before) if self.to < before => TrustShift::Drop,
+            Some(_) => TrustShift::Recovery,
+        }
+    }
+}
+
+/// 前回の画面との差分から、知らせるべき信頼度の変化を拾う。
+///
+/// - 実効信頼度が動いた既存セル（下降・回復）
+/// - 満点でないまま現れた新セル（仮置きの追加など）
+///
+/// 満点で現れた新セルはニュースにしない。それは通常の作業である。
+#[must_use]
+pub fn trust_changes(previous: &SpaceView, next: &SpaceView) -> Vec<TrustChange> {
+    let mut changes: Vec<TrustChange> = next
+        .cells
+        .iter()
+        .filter_map(|cell| {
+            let before = previous
+                .cells
+                .iter()
+                .find(|past| past.id == cell.id)
+                .map(|past| past.effective_trust);
+            match before {
+                Some(unchanged) if unchanged == cell.effective_trust => return None,
+                None if cell.effective_trust == Trust::Checked => return None,
+                _ => {}
+            }
+            let weak = next.weak_links.iter().find(|weak| weak.id == cell.id);
+            Some(TrustChange {
+                id: cell.id,
+                label: next.label_of(cell.id),
+                from: before,
+                to: cell.effective_trust,
+                culprit: weak.map(|weak| weak.culprit),
+                reason: weak.map(|weak| weak.reason.clone()).unwrap_or_default(),
+            })
+        })
+        .collect();
+    changes.sort_by_key(|change| match change.shift() {
+        TrustShift::Drop => 0,
+        TrustShift::NewWeak => 1,
+        TrustShift::Recovery => 2,
+    });
+    changes
+}
+
 /// 画面全体の見え方。
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct SpaceView {
@@ -117,6 +228,8 @@ pub struct SpaceView {
     pub weakest_link: Trust,
     /// 満点でないものの内訳。
     pub weak_links: Vec<WeakLinkView>,
+    /// 直近の操作で実効信頼度が動いたもの。[`trust_changes`] で埋める。
+    pub trust_changes: Vec<TrustChange>,
 }
 
 impl SpaceView {
@@ -127,19 +240,39 @@ impl SpaceView {
     /// なったか」を目で確かめられる唯一の場所である。
     #[must_use]
     pub fn of(workspace: &Workspace, recomputed: &[CellId]) -> Self {
+        let names: Vec<(CellId, Option<String>)> = workspace
+            .cells()
+            .iter()
+            .map(|cell| (cell.id, name_of(cell)))
+            .collect();
+        let link = |id: CellId| LinkView {
+            id,
+            label: names
+                .iter()
+                .find(|(other, _)| *other == id)
+                .and_then(|(_, name)| name.clone())
+                .unwrap_or_else(|| format!("[{id}]")),
+        };
         let cells = workspace
             .cells()
             .iter()
             .map(|cell| CellView {
                 id: cell.id,
+                name: name_of(cell),
                 source: cell.source.clone(),
                 is_obligation: cell.is_obligation(),
                 value: workspace.value(cell.id).map(|value| value.render()),
                 status: status_of(workspace, cell.id),
                 trust: workspace.own_trust(cell.id),
                 effective_trust: workspace.effective_trust(cell.id),
-                dependencies: ids_of(workspace, &kernel_deps(workspace, cell.id, true)),
-                dependents: ids_of(workspace, &kernel_deps(workspace, cell.id, false)),
+                dependencies: ids_of(workspace, &kernel_deps(workspace, cell.id, true))
+                    .into_iter()
+                    .map(link)
+                    .collect(),
+                dependents: ids_of(workspace, &kernel_deps(workspace, cell.id, false))
+                    .into_iter()
+                    .map(link)
+                    .collect(),
                 recomputed: recomputed.contains(&cell.id),
             })
             .collect();
@@ -147,6 +280,7 @@ impl SpaceView {
         Self {
             revision: workspace.kernel().revision().0,
             cells,
+            trust_changes: Vec::new(),
             weakest_link: workspace.weakest_link(),
             weak_links: workspace
                 .weak_links()
@@ -165,6 +299,46 @@ impl SpaceView {
     #[must_use]
     pub fn has_warning(&self) -> bool {
         !self.weak_links.is_empty()
+    }
+
+    /// セルの表示名。名前が無ければ `[n]`。
+    #[must_use]
+    pub fn label_of(&self, id: CellId) -> String {
+        self.cells
+            .iter()
+            .find(|cell| cell.id == id)
+            .and_then(|cell| cell.name.clone())
+            .unwrap_or_else(|| format!("[{id}]"))
+    }
+
+    /// 自分で触ったセルを除いた、波及で再計算されたもの。
+    ///
+    /// 「触ったから変わった」はニュースではない。**波及だけがニュース**である。
+    /// 1.4 秒のフラッシュは変化盲に食われるので、この一覧を次の操作まで
+    /// 画面に残す（#43）。
+    #[must_use]
+    pub fn ripple_of(&self, touched: Option<CellId>) -> Vec<LinkView> {
+        self.cells
+            .iter()
+            .filter(|cell| cell.recomputed && Some(cell.id) != touched)
+            .map(|cell| LinkView {
+                id: cell.id,
+                label: self.label_of(cell.id),
+            })
+            .collect()
+    }
+}
+
+/// セルが提供している名前。無名式には無い。
+fn name_of(cell: &mathrel_host::Cell) -> Option<String> {
+    match &cell.kind {
+        CellKind::Obligation { obligation, .. } => Some(obligation.name.clone()),
+        CellKind::Expression => cell.stmt.as_ref().and_then(|stmt| match stmt {
+            Stmt::ValueDef { name, .. }
+            | Stmt::FuncDef { name, .. }
+            | Stmt::TypeDecl { name, .. } => Some(name.clone()),
+            Stmt::Anonymous { .. } => None,
+        }),
     }
 }
 
@@ -374,16 +548,139 @@ mod tests {
         assert!(!view.cells[0].status.detail.is_empty());
     }
 
+    /// 依存は番号ではなく名前で読める（再認 > 想起、#44）。
     #[test]
-    fn dependencies_are_shown_in_both_directions() {
+    fn dependencies_are_shown_in_both_directions_with_names() {
         let mut workspace = workspace();
         workspace.add_cell("x = 2");
         workspace.add_cell("y = x + 1");
         workspace.evaluate();
 
         let view = SpaceView::of(&workspace, &[]);
-        assert_eq!(view.cells[1].dependencies, vec![1]);
-        assert_eq!(view.cells[0].dependents, vec![2]);
+        assert_eq!(
+            view.cells[1].dependencies,
+            vec![LinkView {
+                id: 1,
+                label: "x".to_owned()
+            }]
+        );
+        assert_eq!(
+            view.cells[0].dependents,
+            vec![LinkView {
+                id: 2,
+                label: "y".to_owned()
+            }]
+        );
+    }
+
+    /// 名前のないセルは番号表示に落ちる。
+    #[test]
+    fn an_anonymous_cell_falls_back_to_its_number() {
+        let mut workspace = workspace();
+        workspace.add_cell("1 + 1");
+        workspace.evaluate();
+
+        let view = SpaceView::of(&workspace, &[]);
+        assert_eq!(view.cells[0].name, None);
+        assert_eq!(view.label_of(1), "[1]");
+    }
+
+    /// 静かなセルだけが畳める。異常・義務・引きずられは畳んではならない（#48）。
+    #[test]
+    fn only_clean_fully_trusted_expressions_are_quiet() {
+        let mut workspace = workspace();
+        workspace.add_cell("x = 2");
+        workspace.add_cell("y = x + 1");
+        workspace.add_assumption(parse_obligation_line("hard : 難しい命題").expect("parse"));
+        workspace.evaluate();
+
+        let view = SpaceView::of(&workspace, &[]);
+        assert!(view.cells[0].is_quiet(), "最新の数式は静か");
+        assert!(!view.cells[2].is_quiet(), "義務は畳まない");
+
+        // x を触って y を古くすると、y は静かでなくなる。
+        workspace.update_cell(1, "x = 3").expect("update");
+        let view = SpaceView::of(&workspace, &[]);
+        assert!(!view.cells[1].is_quiet(), "要再計算のセルは畳まない");
+    }
+
+    /// 波及だけがニュース。自分で触ったセルは除く（#43）。
+    #[test]
+    fn the_ripple_excludes_the_cell_you_touched() {
+        let mut workspace = workspace();
+        let x = workspace.add_cell("x = 2");
+        workspace.add_cell("f(t) = t^2 + 1");
+        workspace.add_cell("y = f(x)");
+        workspace.evaluate();
+
+        workspace.update_cell(x, "x = 3").expect("update");
+        let stats = workspace.evaluate();
+        let view = SpaceView::of(&workspace, &stats.order);
+
+        let ripple = view.ripple_of(Some(x));
+        assert_eq!(ripple.len(), 1, "y だけが波及");
+        assert_eq!(ripple[0].label, "y");
+    }
+
+    fn cell_with_trust(id: CellId, name: &str, effective: Trust) -> CellView {
+        CellView {
+            id,
+            name: Some(name.to_owned()),
+            source: String::new(),
+            is_obligation: true,
+            value: None,
+            status: Status {
+                tone: Tone::Clean,
+                label: String::new(),
+                detail: String::new(),
+            },
+            trust: effective,
+            effective_trust: effective,
+            dependencies: Vec::new(),
+            dependents: Vec::new(),
+            recomputed: false,
+        }
+    }
+
+    fn space_with(cells: Vec<CellView>) -> SpaceView {
+        SpaceView {
+            cells,
+            ..SpaceView::default()
+        }
+    }
+
+    /// 変化だけがニュースになり、下降 → 新規 → 回復の順に並ぶ（#42）。
+    #[test]
+    fn trust_changes_reports_shifts_in_severity_order() {
+        let previous = space_with(vec![
+            cell_with_trust(1, "a", Trust::Checked),
+            cell_with_trust(2, "b", Trust::Assumed),
+            cell_with_trust(3, "c", Trust::Checked),
+        ]);
+        let next = space_with(vec![
+            cell_with_trust(1, "a", Trust::Assumed),   // 下降
+            cell_with_trust(2, "b", Trust::Checked),   // 回復
+            cell_with_trust(3, "c", Trust::Checked),   // 変化なし
+            cell_with_trust(4, "d", Trust::Suggested), // 弱いまま新規
+        ]);
+
+        let changes = trust_changes(&previous, &next);
+        assert_eq!(changes.len(), 3, "変化していない c は出ない");
+        assert_eq!(changes[0].shift(), TrustShift::Drop);
+        assert_eq!(changes[0].label, "a");
+        assert_eq!(changes[0].from, Some(Trust::Checked));
+        assert_eq!(changes[1].shift(), TrustShift::NewWeak);
+        assert_eq!(changes[1].label, "d");
+        assert_eq!(changes[2].shift(), TrustShift::Recovery);
+        assert_eq!(changes[2].label, "b");
+    }
+
+    /// 満点で現れた新セルはニュースにしない。通常の作業である。
+    #[test]
+    fn a_new_fully_trusted_cell_is_not_news() {
+        let previous = space_with(Vec::new());
+        let next = space_with(vec![cell_with_trust(1, "a", Trust::Checked)]);
+        assert!(trust_changes(&previous, &next).is_empty());
     }
 
     /// 満点でないものは、原因つきで警告になる。
