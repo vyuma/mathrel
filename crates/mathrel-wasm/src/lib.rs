@@ -64,17 +64,31 @@ pub const MR_BAD_CELL: i32 = -2;
 // 記憶領域
 // ---------------------------------------------------------------------
 
+/// 長さ 0 のときに返す、有効だが確保はしていないポインタ。
+const DANGLING: *mut u8 = std::ptr::NonNull::<u8>::dangling().as_ptr();
+
 /// `len` バイトの領域を確保する。呼び出し側が [`mr_free`] で返すこと。
+///
+/// 確保に失敗したら空ポインタを返す。パニックはしない。
 ///
 /// # Safety
 ///
 /// 返ったポインタは、`len` バイトぶんだけ書き込んでよい。
+///
+/// NOTE: `Vec::with_capacity` を使ってはならない。あれが確保する容量は
+/// 要求した長さ**以上**であって、一致するとは限らない。解放時に渡す layout が
+/// 確保時と食い違うと未定義動作になる。ここでは [`std::alloc`] を直に使い、
+/// 確保と解放で同じ layout を使う。
 #[no_mangle]
 pub extern "C" fn mr_alloc(len: usize) -> *mut u8 {
-    let mut buffer = Vec::<u8>::with_capacity(len);
-    let ptr = buffer.as_mut_ptr();
-    std::mem::forget(buffer);
-    ptr
+    if len == 0 {
+        return DANGLING;
+    }
+    match std::alloc::Layout::from_size_align(len, 1) {
+        // SAFETY: len > 0 なので、サイズ 0 の確保にはならない。
+        Ok(layout) => unsafe { std::alloc::alloc(layout) },
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
 /// [`mr_alloc`] で取った領域を返す。
@@ -85,10 +99,12 @@ pub extern "C" fn mr_alloc(len: usize) -> *mut u8 {
 /// ならない。同じ領域を 2 回渡してはならない。
 #[no_mangle]
 pub unsafe extern "C" fn mr_free(ptr: *mut u8, len: usize) {
-    if ptr.is_null() {
+    if ptr.is_null() || len == 0 {
         return;
     }
-    drop(Vec::from_raw_parts(ptr, 0, len));
+    if let Ok(layout) = std::alloc::Layout::from_size_align(len, 1) {
+        std::alloc::dealloc(ptr, layout);
+    }
 }
 
 /// 直近の結果が置かれている場所。
@@ -153,12 +169,7 @@ pub unsafe extern "C" fn mr_add_cell(handle: u32, ptr: *const u8, len: usize) ->
 ///
 /// `ptr` から `len` バイトが読める領域を指していなければならない。
 #[no_mangle]
-pub unsafe extern "C" fn mr_update_cell(
-    handle: u32,
-    id: u64,
-    ptr: *const u8,
-    len: usize,
-) -> i32 {
+pub unsafe extern "C" fn mr_update_cell(handle: u32, id: u64, ptr: *const u8, len: usize) -> i32 {
     let source = read_utf8(ptr, len);
     with_workspace(handle, |workspace| {
         if workspace.update_cell(id, &source).is_ok() {
@@ -213,12 +224,7 @@ pub extern "C" fn mr_snapshot(handle: u32) -> usize {
 // ---------------------------------------------------------------------
 
 fn with_workspace<T>(handle: u32, action: impl FnOnce(&mut Workspace) -> T) -> Option<T> {
-    WORKSPACES.with(|workspaces| {
-        workspaces
-            .borrow_mut()
-            .get_mut(&handle)
-            .map(action)
-    })
+    WORKSPACES.with(|workspaces| workspaces.borrow_mut().get_mut(&handle).map(action))
 }
 
 fn set_result(text: String) -> usize {
@@ -379,6 +385,32 @@ mod tests {
         let snapshot = result(mr_snapshot(handle));
         assert!(snapshot.contains("\"error\""), "{snapshot}");
         mr_workspace_free(handle);
+    }
+
+    /// 確保と解放を繰り返しても壊れない。layout が一致していることの確認。
+    #[test]
+    fn allocation_round_trips_at_many_sizes() {
+        for len in [1usize, 2, 3, 7, 8, 9, 64, 100, 4096] {
+            let ptr = mr_alloc(len);
+            assert!(!ptr.is_null(), "len={len}");
+            // SAFETY: たった今 len バイトを確保した。
+            unsafe {
+                std::ptr::write_bytes(ptr, 0xab, len);
+                assert_eq!(*ptr, 0xab);
+                mr_free(ptr, len);
+            }
+        }
+    }
+
+    /// 長さ 0 でも空ポインタを返さず、解放しても落ちない。
+    #[test]
+    fn a_zero_length_allocation_is_valid_but_frees_to_nothing() {
+        let ptr = mr_alloc(0);
+        assert!(!ptr.is_null(), "長さ 0 でも有効なポインタを返す");
+        // SAFETY: mr_alloc(0) が返したものを、同じ長さで返している。
+        unsafe { mr_free(ptr, 0) };
+        // SAFETY: 空ポインタは無視される。
+        unsafe { mr_free(std::ptr::null_mut(), 16) };
     }
 
     #[test]
