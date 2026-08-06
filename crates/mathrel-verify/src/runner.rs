@@ -5,11 +5,10 @@
 //! 書いた時点の開発機に Lean は入っていない。道具の有無でテストの通り方が
 //! 変わる作りにはしない。
 
-use std::io::Write;
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::io::{Read, Write};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// プロセスの実行結果。
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -108,28 +107,57 @@ impl CommandRunner for ProcessRunner {
             let _ = pipe.write_all(stdin.as_bytes());
         }
 
-        // `std::process` には待ち時間つきの wait がない。別スレッドで待って
-        // チャネルで取る。時間切れなら子プロセスを殺す。
-        let (sender, receiver) = mpsc::channel();
-        let handle = thread::spawn(move || {
-            let result = child.wait_with_output();
-            // 受け取り手が既に諦めていても構わない。
-            let _ = sender.send(result);
-        });
+        // 出力は別スレッドで吸う。パイプが詰まると子プロセスが書き込みで
+        // 止まり、永遠に終わらなくなるため（wait より先に読み手が要る）。
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+        let stdout_reader = thread::spawn(move || drain(stdout_pipe));
+        let stderr_reader = thread::spawn(move || drain(stderr_pipe));
 
-        match receiver.recv_timeout(self.timeout) {
-            Ok(Ok(output)) => {
-                let _ = handle.join();
-                Ok(CommandOutput {
-                    status: output.status.code(),
-                    stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                    stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-                })
+        let status = wait_with_deadline(&mut child, self.timeout)?;
+
+        let stdout = stdout_reader.join().unwrap_or_default();
+        let stderr = stderr_reader.join().unwrap_or_default();
+        Ok(CommandOutput {
+            status: status.code(),
+            stdout,
+            stderr,
+        })
+    }
+}
+
+/// 締切つきで子プロセスの終了を待つ。**時間切れなら殺して、回収まで行う。**
+///
+/// `Child` を `wait_with_output` に渡してしまうと所有権ごと消費され、
+/// タイムアウト側の分岐から殺せなくなる（以前の実装はそうなっていて、
+/// 「殺す」というコメントだけが残っていた。issue #52）。`try_wait` の
+/// ポーリングなら `Child` が手元に残るので、締切超過で `kill → wait` できる。
+fn wait_with_deadline(child: &mut Child, timeout: Duration) -> Result<ExitStatus, RunError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    // 殺すだけでは足りない。wait で回収しないとゾンビが残る。
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(RunError::Timeout(timeout));
+                }
+                thread::sleep(Duration::from_millis(10));
             }
-            Ok(Err(error)) => Err(RunError::Io(error.to_string())),
-            Err(_) => Err(RunError::Timeout(self.timeout)),
+            Err(error) => return Err(RunError::Io(error.to_string())),
         }
     }
+}
+
+/// パイプを最後まで読む。UTF-8 でないバイトは置換文字に落とす。
+fn drain(pipe: Option<impl Read>) -> String {
+    let mut bytes = Vec::new();
+    if let Some(mut pipe) = pipe {
+        let _ = pipe.read_to_end(&mut bytes);
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// テスト用。決められた応答を順に返す。
@@ -277,7 +305,37 @@ mod tests {
         let runner = ProcessRunner {
             timeout: Duration::from_millis(200),
         };
+        let started = Instant::now();
         let error = runner.run("sleep", &["30"], "").expect_err("時間切れ");
         assert!(matches!(error, RunError::Timeout(_)), "{error:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "打ち切りは締切の直後に返る（30 秒待ってはいない）"
+        );
+    }
+
+    /// 時間切れの子プロセスは**実際に殺され、回収されている**。
+    ///
+    /// 以前の実装は `Timeout` を返すだけで子を放置していた（issue #52）。
+    /// このテストは `wait_with_deadline` の後で `try_wait` が終了済みを
+    /// 返すこと（= kill と回収が済んでいること）まで確かめる。
+    #[test]
+    fn a_timed_out_child_is_killed_and_reaped() {
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn");
+        let error = wait_with_deadline(&mut child, Duration::from_millis(100))
+            .expect_err("時間切れになるはず");
+        assert!(matches!(error, RunError::Timeout(_)), "{error:?}");
+
+        let reaped = child.try_wait().expect("try_wait");
+        assert!(
+            reaped.is_some(),
+            "子プロセスが回収済みであること（放置されていたら None）"
+        );
+        assert!(!reaped.expect("status").success(), "kill で死んでいる");
     }
 }
