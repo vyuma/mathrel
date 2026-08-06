@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: test / clippy / fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust ツールチェイン
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets
+
+      # 性質テストは実行のたびに新しい乱数で 1000 ケース回る。ここで回すこと
+      # 自体に価値がある。実際、手元の 6 回の実行で 1 度だけ出た反例から
+      # カーネルのバグが 1 件見つかっている。
+      # 過去の反例は properties.proptest-regressions に入っており、
+      # 新しいケースより先に必ず再実行される。
+      - name: test
+        run: cargo test --workspace
+
+      # ABI はネイティブでテストしているが、本番の的は wasm である。
+      # ここが通らなければ UI が動かない。
+      - name: wasm ビルド
+        run: cargo build -p mathrel-wasm --target wasm32-unknown-unknown --release
+
+      - name: wasm の export を確認
+        run: |
+          node -e '
+            const fs = require("fs");
+            const wasm = "target/wasm32-unknown-unknown/release/mathrel_wasm.wasm";
+            WebAssembly.compile(fs.readFileSync(wasm)).then((module) => {
+              const found = new Set(
+                WebAssembly.Module.exports(module).map((e) => e.name),
+              );
+              const required = [
+                "memory", "mr_alloc", "mr_free", "mr_result_ptr", "mr_result_len",
+                "mr_workspace_new", "mr_workspace_free", "mr_add_cell",
+                "mr_update_cell", "mr_remove_cell", "mr_evaluate", "mr_snapshot",
+              ];
+              const missing = required.filter((name) => !found.has(name));
+              if (missing.length) {
+                console.error("export が足りません:", missing.join(", "));
+                process.exit(1);
+              }
+              console.log("export はすべて揃っています (" + required.length + " 件)");
+            });
+          '
+
+      - name: fmt
+        run: cargo fmt --all --check
