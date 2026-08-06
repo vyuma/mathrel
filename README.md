@@ -154,3 +154,13 @@ echo "長いプロンプト" | scripts/codex.sh -
 - **P2（UI 最小）**: 未着手。wasm ABI は用意済み
 
 未解決の設計課題は [`docs/検証層の設計.md`](docs/検証層の設計.md) §6.1〜6.2 に記録してある。
+
+---
+
+## ライセンス
+
+MIT ライセンス（[LICENSE-MIT](LICENSE-MIT)）または Apache License 2.0
+（[LICENSE-APACHE](LICENSE-APACHE)）のいずれかを選べます。
+
+このリポジトリへ意図的に提出された貢献は、Apache-2.0 の定義に従い、追加の
+条件なしに上記のデュアルライセンスで提供されたものとみなします。
