@@ -6,6 +6,8 @@
 //! 変わる作りにはしない。
 
 use std::io::{Read, Write};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -87,25 +89,44 @@ impl Default for ProcessRunner {
 }
 
 impl CommandRunner for ProcessRunner {
+    /// 契約: **`run` が返るとき、起動したプロセス群はもう残っていない。**
+    ///
+    /// `lake env lean` は孫として `lean` を起動する。子だけを見ていると、
+    /// (1) タイムアウトで子を殺しても孫が生き残る、(2) 子が正常終了しても
+    /// 孫がパイプを握っている限り EOF が来ず、**タイムアウトと無関係に**
+    /// 読み取りが張り付く（`sh -c 'sleep 15 & exit 0'` で実測 15 秒）。
+    /// そこで子を自分のプロセスグループの先頭にして、終了時にグループごと
+    /// 掃除する。
     fn run(&self, program: &str, args: &[&str], stdin: &str) -> Result<CommandOutput, RunError> {
-        let mut child = match Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
+            .stderr(Stdio::piped());
+        // 子を新しいプロセスグループの先頭にする（pgid = 子の pid）。
+        #[cfg(unix)]
+        command.process_group(0);
+        let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Err(RunError::NotFound(program.to_owned()))
             }
             Err(error) => return Err(RunError::Io(error.to_string())),
         };
+        let group = child.id();
 
-        if let Some(mut pipe) = child.stdin.take() {
-            // 相手が先に終了して SIGPIPE になるのは異常ではない。無視する。
-            let _ = pipe.write_all(stdin.as_bytes());
-        }
+        // stdin は専用スレッドで流し込む。本体スレッドで書くと、入力と出力が
+        // 共に 64KB を超えたとき、まだ読み手のいない stdout が詰まって親子が
+        // 互いを待つ（cat に 1MB 渡すと固まる形になっていた）。
+        let stdin_pipe = child.stdin.take();
+        let stdin_data = stdin.to_owned();
+        let stdin_writer = thread::spawn(move || {
+            if let Some(mut pipe) = stdin_pipe {
+                // 相手が先に終了して SIGPIPE になるのは異常ではない。無視する。
+                let _ = pipe.write_all(stdin_data.as_bytes());
+            }
+        });
 
         // 出力は別スレッドで吸う。パイプが詰まると子プロセスが書き込みで
         // 止まり、永遠に終わらなくなるため（wait より先に読み手が要る）。
@@ -114,16 +135,48 @@ impl CommandRunner for ProcessRunner {
         let stdout_reader = thread::spawn(move || drain(stdout_pipe));
         let stderr_reader = thread::spawn(move || drain(stderr_pipe));
 
-        let status = wait_with_deadline(&mut child, self.timeout)?;
+        let waited = wait_with_deadline(&mut child, self.timeout);
 
+        // グループの掃除。タイムアウト時（子は殺したが孫が残り得る）と、
+        // 読み手がまだ EOF を見ていないとき（= 誰かがパイプを握っている）に
+        // 行う。両読み手が既に終わっているなら書き端は閉じており、殺す相手も
+        // パイプを詰まらせる相手もいない。
+        if waited.is_err() || !stdout_reader.is_finished() || !stderr_reader.is_finished() {
+            kill_group(group);
+        }
+
+        // グループが死んでいるので、これらの join は必ず返る（EOF / EPIPE）。
         let stdout = stdout_reader.join().unwrap_or_default();
         let stderr = stderr_reader.join().unwrap_or_default();
+        let _ = stdin_writer.join();
+
+        let status = waited?;
         Ok(CommandOutput {
             status: status.code(),
             stdout,
             stderr,
         })
     }
+}
+
+/// プロセスグループ全体へ SIGKILL を送る。誰も残っていなければ何もしない。
+///
+/// 対象は `process_group(0)` で自分専用に作ったグループなので、他所の
+/// プロセスを巻き込まない。子の回収後に pgid が再利用される理論上の窓は
+/// あるが、これは timeout(1) など既存のグループ殺し全般と同じ前提である。
+///
+/// libc の `kill(2)` を直接呼ばず `kill` コマンドを起動するのは、この
+/// クレートが `#![forbid(unsafe_code)]` だからである。掃除の経路だけの
+/// 追加コストであり、失敗しても best-effort（`let _`）でよい。
+fn kill_group(group: u32) {
+    #[cfg(unix)]
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{group}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    #[cfg(not(unix))]
+    let _ = group;
 }
 
 /// 締切つきで子プロセスの終了を待つ。**時間切れなら殺して、回収まで行う。**
@@ -337,5 +390,59 @@ mod tests {
             "子プロセスが回収済みであること（放置されていたら None）"
         );
         assert!(!reaped.expect("status").success(), "kill で死んでいる");
+    }
+
+    /// 孫がパイプを握ったまま生きていても、run はすぐ返る。
+    ///
+    /// 子が正常終了しても、孫が stdout の書き端を継いでいると EOF が来ない。
+    /// グループ掃除の前は、タイムアウトと無関係に孫の寿命ぶん張り付いた
+    /// （`sleep 15 & exit 0` で実測 15 秒）。パイプ内のデータは失われない。
+    #[test]
+    fn a_grandchild_holding_the_pipe_does_not_hang_the_runner() {
+        let runner = ProcessRunner {
+            timeout: Duration::from_secs(10),
+        };
+        let started = Instant::now();
+        let output = runner
+            .run("sh", &["-c", "echo before; sleep 30 & exit 0"], "")
+            .expect("子は正常終了している");
+        assert!(output.succeeded());
+        assert!(output.stdout.contains("before"), "{output:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "孫の sleep 30 を待ってはいない"
+        );
+    }
+
+    /// タイムアウト時、孫も含めてグループごと死ぬ。
+    #[test]
+    fn a_timeout_kills_the_whole_process_group() {
+        let runner = ProcessRunner {
+            timeout: Duration::from_millis(300),
+        };
+        let started = Instant::now();
+        let error = runner
+            .run("sh", &["-c", "sleep 30 & sleep 30; true"], "")
+            .expect_err("時間切れ");
+        assert!(matches!(error, RunError::Timeout(_)), "{error:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "グループを殺せば読み取りの join もすぐ返る"
+        );
+    }
+
+    /// 入力と出力が共に大きくてもデッドロックしない。
+    ///
+    /// stdin を本体スレッドで書くと、読み手が立つ前に stdout が詰まって
+    /// 親子が互いを待つ（cat に 1MB 渡すと固まった）。stdin は専用スレッド。
+    #[test]
+    fn large_input_and_output_do_not_deadlock() {
+        let runner = ProcessRunner {
+            timeout: Duration::from_secs(30),
+        };
+        let input = "x".repeat(1 << 20);
+        let output = runner.run("cat", &[], &input).expect("cat は通る");
+        assert!(output.succeeded());
+        assert_eq!(output.stdout.len(), input.len(), "1MB がそのまま往復する");
     }
 }
