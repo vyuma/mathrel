@@ -525,3 +525,52 @@ fn removing_a_cited_assumption_drops_trust_instead_of_raising_it() {
         entry.reason
     );
 }
+
+/// 検証器を差し替えたら、義務は新しい検証器で検査し直される（issue #54）。
+///
+/// `ProofSpace` には §6.0(a) の防御（`last_backend`）があるが、`Workspace` の
+/// 検証経路には無かった。TrivialVerifier で Checked になった義務が、Lean へ
+/// 差し替えた後も Lean 未検査のまま Checked 表示になる。
+#[test]
+fn swapping_the_verifier_rechecks_every_obligation() {
+    let mut workspace = Workspace::new();
+    let first = Rc::new(Counting::new());
+    workspace.set_verifier(first.clone());
+    workspace.add_obligation(mathrel_host::parse_obligation_line("thm : a = a").expect("parse"));
+    workspace.evaluate();
+    assert_eq!(first.calls.borrow().len(), 1, "最初の検証器が 1 回呼ばれる");
+
+    // 同じ検証器のままなら、再評価しても再検証は走らない。
+    workspace.evaluate();
+    assert_eq!(
+        first.calls.borrow().len(),
+        1,
+        "同じ backend なら再検証しない"
+    );
+
+    // 別の backend に差し替えると、義務が検査し直される。
+    let second = Rc::new(OtherBackend(RefCell::new(0)));
+    workspace.set_verifier(second.clone());
+    workspace.evaluate();
+    assert_eq!(
+        *second.0.borrow(),
+        1,
+        "差し替え後の検証器が呼ばれる（呼ばれなければ #54 の再発）"
+    );
+}
+
+/// backend が違うだけの検証器。
+struct OtherBackend(RefCell<usize>);
+
+impl Verifier for OtherBackend {
+    fn verify(&self, _obligation: &Obligation, _context: &[String]) -> Verdict {
+        *self.0.borrow_mut() += 1;
+        Verdict::Proved {
+            trust: Trust::Checked,
+        }
+    }
+
+    fn backend(&self) -> BackendId {
+        BackendId::new("other", "1")
+    }
+}

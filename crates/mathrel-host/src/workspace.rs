@@ -28,7 +28,7 @@ use mathrel_kernel::{
     Capability, Decl, DeclKind, Entity, EvalOutcome, Expr, Freshness, ItemSpec, Kernel, TypeInfo,
     ValueUpdate,
 };
-use mathrel_verify::{Obligation, Trust, Verdict, Verifier};
+use mathrel_verify::{BackendId, Obligation, Trust, Verdict, Verifier};
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::rc::Rc;
 
@@ -163,6 +163,13 @@ pub struct Workspace {
     kernel: Kernel,
     cells: Vec<Cell>,
     index: HashMap<Entity, usize>,
+    /// 直近の評価で使った検証器の同一性。
+    ///
+    /// 検証器を差し替えても、カーネルは指紋の材料が変わったことを知らない。
+    /// 全セルが Clean なら `next_batch()` は空で、新しい検証器は一度も
+    /// 呼ばれない — TrivialVerifier の Checked が Lean 検査済みのような顔で
+    /// 残る（issue #54）。`ProofSpace` と同じ防御（§6.0(a)）をここにも置く。
+    last_backend: Option<BackendId>,
     values: HashMap<Entity, Value>,
     next_id: CellId,
     /// 検証義務を判定するもの。無ければ義務は `Unavailable` になる。
@@ -199,6 +206,7 @@ impl Workspace {
             values: HashMap::new(),
             next_id: 1,
             verifier: None,
+            last_backend: None,
         }
     }
 
@@ -429,6 +437,24 @@ impl Workspace {
     /// カーネルが `next_batch()` で返したものだけを評価する。何を評価すべきか
     /// を決めるのはカーネルであり、ホストではない。
     pub fn evaluate(&mut self) -> EvalStats {
+        // 検証器が前回と違えば、仮置きでない全義務を明示的に古くする。
+        // 指紋に backend を混ぜるだけでは足りない（§6.0(a)、issue #54）。
+        if let Some(verifier) = self.verifier.clone() {
+            let backend = verifier.backend();
+            if self.last_backend.as_ref() != Some(&backend) {
+                let targets: Vec<Entity> = self
+                    .cells
+                    .iter()
+                    .filter(|cell| matches!(cell.kind, CellKind::Obligation { assumed: false, .. }))
+                    .map(|cell| cell.entity)
+                    .collect();
+                for entity in targets {
+                    let _ = self.kernel.change_value(entity, ValueUpdate::default());
+                }
+                self.last_backend = Some(backend);
+            }
+        }
+
         let mut stats = EvalStats::default();
         loop {
             let batch = self.kernel.next_batch();
