@@ -486,3 +486,42 @@ fn a_line_without_a_name_or_statement_is_rejected() {
     assert!(mathrel_host::parse_obligation_line(" : P").is_none());
     assert!(mathrel_host::parse_obligation_line("t : ").is_none());
 }
+
+/// 引用先の仮置きを削除しても、信頼度は**上がらない**。
+///
+/// 削除で依存辺ごと消えると、古い `Checked` verdict だけが残って実効信頼度が
+/// `Assumed → Checked` に上がって見える、という事故が UI レビューで実際に
+/// 出た（issue #53）。根拠を消した操作は信頼度の向上ではない。参照が
+/// 未解決になった義務は、verdict がどうであれ `Unknown` に落ちる（§7.1 の表）。
+#[test]
+fn removing_a_cited_assumption_drops_trust_instead_of_raising_it() {
+    let mut workspace = Workspace::new();
+    workspace.set_verifier(Rc::new(mathrel_verify::TrivialVerifier));
+    let lemma = workspace
+        .add_assumption(mathrel_host::parse_obligation_line("lemma : 難しい命題").expect("parse"));
+    let theorem = workspace.add_obligation(
+        mathrel_host::parse_obligation_line("thm : a = a cites lemma").expect("parse"),
+    );
+    workspace.evaluate();
+    assert_eq!(workspace.effective_trust(theorem), Trust::Assumed);
+
+    workspace.remove_cell(lemma).expect("remove");
+    workspace.evaluate();
+
+    assert_eq!(
+        workspace.effective_trust(theorem),
+        Trust::Unknown,
+        "引用先が消えたのに Checked に上がってはならない"
+    );
+    assert_eq!(workspace.weakest_link(), Trust::Unknown);
+    let weak = workspace.weak_links();
+    let entry = weak
+        .iter()
+        .find(|weak| weak.id == theorem)
+        .expect("未解決になった定理は弱い環として挙がる");
+    assert!(
+        entry.reason.contains("未解決"),
+        "理由が未解決を名指しする: {}",
+        entry.reason
+    );
+}

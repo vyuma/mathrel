@@ -664,7 +664,33 @@ impl Workspace {
     /// このセル 1 つだけを見たときの信頼度。
     #[must_use]
     pub fn own_trust(&self, id: CellId) -> Trust {
-        self.cell(id).map(Cell::own_trust).unwrap_or(Trust::Unknown)
+        self.cell(id)
+            .map(|cell| self.live_trust(cell))
+            .unwrap_or(Trust::Unknown)
+    }
+
+    /// セルの、**いま生きている**信頼度。
+    ///
+    /// 検証済みの verdict が残っていても、参照が未解決になったり循環に
+    /// 落ちたりしていれば、それは**過去の状態への判定**であって現在の主張の
+    /// 検査ではない。§7.1 の表の通り [`Trust::Unknown`] へ落とす。
+    ///
+    /// これを怠ると、引用先の仮置きを削除したとき、依存辺ごと消えて
+    /// 実効信頼度が `Assumed` から `Checked` に**上がって見える**。根拠を
+    /// 消した操作を信頼度の向上として報告することになる（UI レビューで
+    /// 実際に発生した）。
+    fn live_trust(&self, cell: &Cell) -> Trust {
+        if cell.is_obligation()
+            && (self.kernel.in_cycle(cell.entity).unwrap_or(false)
+                || self
+                    .kernel
+                    .resolution(cell.entity)
+                    .map(|resolution| resolution.is_unresolved())
+                    .unwrap_or(false))
+        {
+            return Trust::Unknown;
+        }
+        cell.own_trust()
     }
 
     /// 上流をすべて畳み込んだ実効信頼度。
@@ -680,7 +706,7 @@ impl Workspace {
             Some(cell) => cell,
             None => return Trust::Unknown,
         };
-        let mut trust = cell.own_trust();
+        let mut trust = self.live_trust(cell);
         let mut visited: BTreeSet<Entity> = BTreeSet::new();
         let mut queue: Vec<Entity> = self.kernel.dependencies(cell.entity).unwrap_or_default();
 
@@ -689,7 +715,7 @@ impl Workspace {
                 continue;
             }
             if let Some(upstream) = self.cell_of(current) {
-                trust = trust.meet(upstream.own_trust());
+                trust = trust.meet(self.live_trust(upstream));
             }
             queue.extend(self.kernel.dependencies(current).unwrap_or_default());
         }
@@ -726,7 +752,7 @@ impl Workspace {
                 let culprit = self.culprit_for(cell, effective);
                 Some(WeakLink {
                     id: cell.id,
-                    own: cell.own_trust(),
+                    own: self.live_trust(cell),
                     effective,
                     culprit: culprit.id,
                     reason: self.reason_for(culprit),
@@ -737,7 +763,7 @@ impl Workspace {
 
     /// 実効信頼度を決めている犯人を探す。自分自身のこともある。
     fn culprit_for<'a>(&'a self, cell: &'a Cell, effective: Trust) -> &'a Cell {
-        if cell.own_trust() == effective {
+        if self.live_trust(cell) == effective {
             return cell;
         }
         let mut visited: BTreeSet<Entity> = BTreeSet::new();
@@ -747,7 +773,7 @@ impl Workspace {
                 continue;
             }
             if let Some(upstream) = self.cell_of(current) {
-                if upstream.own_trust() == effective {
+                if self.live_trust(upstream) == effective {
                     return upstream;
                 }
             }
@@ -757,7 +783,23 @@ impl Workspace {
     }
 
     /// なぜ満点にならないのかを一言で。
+    ///
+    /// 循環・未解決は verdict より先に見る。古い verdict が残っていても、
+    /// 参照が壊れた時点でそれは理由として使えない（[`Self::live_trust`]）。
     fn reason_for(&self, cell: &Cell) -> String {
+        if cell.is_obligation() {
+            if self.kernel.in_cycle(cell.entity).unwrap_or(false) {
+                return "引用が循環しているので検証していません".to_owned();
+            }
+            if self
+                .kernel
+                .resolution(cell.entity)
+                .map(|resolution| resolution.is_unresolved())
+                .unwrap_or(false)
+            {
+                return "未解決の参照があるので、検証結果を数えられません".to_owned();
+            }
+        }
         match &cell.kind {
             CellKind::Expression => "数式セルが未評価です".to_owned(),
             CellKind::Obligation { assumed: true, .. } => {
@@ -772,20 +814,8 @@ impl Workspace {
                     format!("検証が通りませんでした: {}", verdict.reason().unwrap_or(""))
                 }
                 Some(_) => "検査済みです".to_owned(),
-                None => {
-                    if self.kernel.in_cycle(cell.entity).unwrap_or(false) {
-                        "引用が循環しているので検証していません".to_owned()
-                    } else if self
-                        .kernel
-                        .resolution(cell.entity)
-                        .map(|resolution| resolution.is_unresolved())
-                        .unwrap_or(false)
-                    {
-                        "未解決の参照があるので検証していません".to_owned()
-                    } else {
-                        "まだ検証していません".to_owned()
-                    }
-                }
+                // 循環・未解決は冒頭で返しているので、ここは純粋な未検証だけ。
+                None => "まだ検証していません".to_owned(),
             },
         }
     }
