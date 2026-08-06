@@ -172,7 +172,7 @@ impl DependencyGraph {
 
         missing.sort_unstable();
         missing.dedup();
-        ambiguous.sort_by(|a, b| a.0.cmp(&b.0));
+        ambiguous.sort_by_key(|(capability, _)| *capability);
 
         let new_resolution = if !missing.is_empty() {
             Resolution::Unresolved { missing, ambiguous }

@@ -14,13 +14,12 @@ jobs:
     name: test / clippy / fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
+      # 版は rust-toolchain.toml が決める。ここで stable を入れてはならない。
+      # 手元と CI で clippy の版がずれると、CI だけが赤くなる。
       - name: Rust ツールチェイン
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
-          rustup target add wasm32-unknown-unknown
+        run: rustup show active-toolchain || rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
 
