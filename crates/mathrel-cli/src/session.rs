@@ -813,7 +813,6 @@ mod tests {
         assert!(output.contains("未解決"), "{output}");
     }
 
-
     #[test]
     fn the_verify_summary_reports_the_weakest_link() {
         let mut session = Session::new();

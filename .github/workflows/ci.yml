@@ -73,14 +73,17 @@ jobs:
     defaults:
       run:
         working-directory: crates/mathrel-ui
+    env:
+      # rust-toolchain.toml は 1.87 を指しており、`rustup default` より
+      # 優先される。環境変数だけがそれを上書きできる。
+      RUSTUP_TOOLCHAIN: 1.88.0
     steps:
       - uses: actions/checkout@v5
 
       - name: Rust ツールチェイン
         run: |
           rustup toolchain install 1.88.0 --profile minimal --component clippy,rustfmt
-          rustup default 1.88.0
-          rustup target add wasm32-unknown-unknown
+          rustup target add wasm32-unknown-unknown --toolchain 1.88.0
 
       - uses: Swatinem/rust-cache@v2
         with:

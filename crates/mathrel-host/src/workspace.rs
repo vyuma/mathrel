@@ -1200,7 +1200,6 @@ fn split_dependencies(rest: &str) -> (String, Vec<String>, Vec<String>) {
     (statement, uses, cites)
 }
 
-
 fn parse(source: &str) -> (Option<Stmt>, Option<String>) {
     match parse_statement(source) {
         Ok(stmt) => (Some(stmt), None),
