@@ -77,6 +77,19 @@ assert_eq!(space.effective_trust(theorem), Trust::Assumed); // だが仮置き�
 
 **早期カットオフは証明でこそ本質的である。** 算術の再計算はマイクロ秒だが、Lean の再検査は秒〜分かかる。定義を触るたびに全証明を検査し直す設計では実用にならない。
 
+数式セルと検証義務は**同じワークスペースの同じグラフ**に載る。`x = 2` というセルと、`x` に言及する定理が繋がる。
+
+```
+> x = 2
+> :assume hard : 難しい命題
+⚠ 信頼度が満点でないものが 1 件あります: [2]（:trust で内訳）
+> :thm main : a = a cites hard
+[3] main : a = a  (Checked → 実効 Assumed)
+⚠ 信頼度が満点でないものが 2 件あります: [2] [3]（:trust で内訳）
+```
+
+**満点でない信頼度は黙って通さない。** どの命令の後でも警告が出て、`:trust` が原因のセルを名指しする。
+
 **AI は提案し、検証器が判定する。** `ProofSynthesizer` は文字列しか返せず、`Verdict` を返す手段を型として持たない。AI が出した証明を Lean が拒否したら、それは単に失敗した試行である。
 
 Lean バックエンドは一時ファイルへ書き出して `lake env lean <path>` を呼ぶ。`sorry` の検出は警告文の一致ではなく、`#print axioms` が報告する `sorryAx` で行う（壊れたときに信頼度が上がる側へ倒れないため）。設計の詳細と、外部レビューで見つかった誤りは [`docs/検証層の設計.md`](docs/検証層の設計.md) §6.0。
@@ -86,7 +99,7 @@ Lean バックエンドは一時ファイルへ書き出して `lake env lean <p
 ## 使う
 
 ```sh
-cargo test --workspace          # 199 テスト
+cargo test --workspace          # 232 テスト
 cargo run -p mathrel-cli -- --demo
 printf 'x = 2\ny = x + 1\n:list\n' | cargo run -q -p mathrel-cli
 ```
@@ -150,7 +163,7 @@ echo "長いプロンプト" | scripts/codex.sh -
 
 - **P0（カーネル v0.1）**: 完了。シナリオテストと性質テストが green
 - **P1（評価ループ + CLI）**: 完了。上記の完了条件を CLI で確認できる
-- **P1.5（検証層の骨格）**: 骨格は完了。Lean バックエンドは実地未投入
+- **P1.5（検証層の骨格）**: 完了。数式セルと証明が 1 つのグラフに載る。Lean バックエンドは実地未投入（[#23](https://github.com/vyuma/mathrel/issues/23)）
 - **P2（UI 最小）**: 未着手。wasm ABI は用意済み
 
 未解決の設計課題は [`docs/検証層の設計.md`](docs/検証層の設計.md) §6.1〜6.2 に記録してある。

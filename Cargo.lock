@@ -128,6 +128,7 @@ name = "mathrel-host"
 version = "0.1.0"
 dependencies = [
  "mathrel-kernel",
+ "mathrel-verify",
 ]
 
 [[package]]

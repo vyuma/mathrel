@@ -5,7 +5,8 @@
 
 use mathrel_host::Workspace;
 use mathrel_kernel::Freshness;
-use mathrel_verify::{Obligation, ProofSpace, TrivialVerifier, Trust};
+use mathrel_verify::{Obligation, TrivialVerifier, Trust};
+use std::rc::Rc;
 
 /// 1 行の入力に対する応答。
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -38,9 +39,12 @@ impl Response {
 }
 
 /// CLI の状態。
+///
+/// 数式セルと検証義務は**同じワークスペース**に載る。以前は別々の空間に
+/// なっていたが、issue #22 で統合した。`x = 2` というセルと、`x` に言及する
+/// 定理が繋がる。
 pub struct Session {
     workspace: Workspace,
-    proofs: ProofSpace,
 }
 
 impl Default for Session {
@@ -53,14 +57,42 @@ impl Session {
     /// 空のセッション。
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            workspace: Workspace::new(),
-            proofs: ProofSpace::new(),
-        }
+        let mut workspace = Workspace::new();
+        // v0.1 では自明な命題しか通らない。Lean を使うには
+        // `LeanVerifier` を差す（issue #23）。
+        workspace.set_verifier(Rc::new(TrivialVerifier));
+        Self { workspace }
     }
 
     /// 1 行を処理する。
+    ///
+    /// 実効信頼度が満点でないものがあれば、**どの命令の後でも警告を出す**。
+    /// 最下行にひっそり出すだけでは見落とされる。
     pub fn handle(&mut self, line: &str) -> Response {
+        let mut response = self.dispatch(line);
+        // `:trust` は内訳をそのまま出しているので、重ねて警告しない。
+        let already_shown = line.trim().starts_with(":trust");
+        if !response.quit && !already_shown {
+            response.lines.extend(self.trust_warning());
+        }
+        response
+    }
+
+    /// 満点でないものがあれば警告を返す。無ければ空。
+    fn trust_warning(&self) -> Vec<String> {
+        let weak = self.workspace.weak_links();
+        if weak.is_empty() {
+            return Vec::new();
+        }
+        let names: Vec<String> = weak.iter().map(|link| format!("[{}]", link.id)).collect();
+        vec![format!(
+            "⚠ 信頼度が満点でないものが {} 件あります: {}（:trust で内訳）",
+            weak.len(),
+            names.join(" ")
+        )]
+    }
+
+    fn dispatch(&mut self, line: &str) -> Response {
         let line = line.trim();
         if line.is_empty() {
             return Response::empty();
@@ -84,6 +116,7 @@ impl Session {
             ":thm" => self.add_obligation(rest, false),
             ":assume" => self.add_obligation(rest, true),
             ":verify" => Response::of(self.verify()),
+            ":trust" => Response::of(self.trust()),
             ":demo" => Response::of(self.demo()),
             other => Response::line(format!("知らない命令です: {other}（:help で一覧）")),
         }
@@ -257,75 +290,168 @@ impl Session {
     // 検証
     // ---------------------------------------------------------------
 
-    /// `:thm 名前 : 命題` / `:assume 名前 : 命題`
+    /// `:thm 名前 : 命題 [uses a,b] [cites c,d]`
     ///
-    /// NOTE: 検証空間は今のところ評価のワークスペースとは別のグラフである。
-    /// 1 つに統合するのは企画書 P1.5（`docs/検証層の設計.md` §7）。
+    /// `uses` はセルが定義する名前、`cites` は他の命題を指す。どちらも
+    /// 申告制であり、命題をパースして推測することはしない。
     fn add_obligation(&mut self, rest: &str, assume: bool) -> Response {
-        let (name, statement) = match rest.split_once(':') {
-            Some((name, statement)) => (name.trim(), statement.trim()),
+        let (name, rest) = match rest.split_once(':') {
+            Some((name, rest)) => (name.trim(), rest.trim()),
             None => {
                 return Response::line(if assume {
-                    ":assume <名前> : <命題> の形で指定してください"
+                    ":assume <名前> : <命題> [uses a,b] [cites c,d]"
                 } else {
-                    ":thm <名前> : <命題> の形で指定してください"
+                    ":thm <名前> : <命題> [uses a,b] [cites c,d]"
                 })
             }
         };
+        let (statement, uses, cites) = split_dependencies(rest);
         if name.is_empty() || statement.is_empty() {
             return Response::line("名前と命題の両方が要ります");
         }
 
-        let obligation = Obligation::new(name, statement);
-        let entity = if assume {
-            self.proofs.add_assumption(obligation)
-        } else {
-            self.proofs.add_obligation(obligation)
-        };
-        self.proofs.verify_all(&TrivialVerifier);
+        let use_refs: Vec<&str> = uses.iter().map(String::as_str).collect();
+        let cite_refs: Vec<&str> = cites.iter().map(String::as_str).collect();
+        let obligation = Obligation::new(name, &statement)
+            .using(&use_refs)
+            .citing(&cite_refs);
 
-        Response::line(format!(
-            "{name} : {statement}  ({})",
-            self.render_trust(entity)
-        ))
+        let id = if assume {
+            self.workspace.add_assumption(obligation)
+        } else {
+            self.workspace.add_obligation(obligation)
+        };
+        self.workspace.evaluate();
+
+        Response::of(vec![
+            format!("[{id}] {name} : {statement}  ({})", self.render_trust(id)),
+            format!("  {}", self.obligation_note(id)),
+        ])
+    }
+
+    /// 検証がどうなったかの一言。
+    fn obligation_note(&self, id: u64) -> String {
+        match self.workspace.verdict(id) {
+            Some(verdict) if verdict.is_unavailable() => {
+                format!("検証器なし: {}", verdict.reason().unwrap_or(""))
+            }
+            Some(verdict) if !verdict.is_proved() => {
+                format!("通りませんでした: {}", verdict.reason().unwrap_or(""))
+            }
+            // 仮置きを「検証済み」と呼んではならない。誰も検査していない。
+            Some(_) if self.workspace.own_trust(id) == Trust::Assumed => {
+                "仮置き（誰も検査していません）".to_owned()
+            }
+            Some(_) => "検証済み".to_owned(),
+            None => {
+                let cell = match self.workspace.cell(id) {
+                    Some(cell) => cell,
+                    None => return "不明".to_owned(),
+                };
+                match self.workspace.kernel().resolution(cell.entity) {
+                    Ok(resolution) if resolution.is_unresolved() => {
+                        "未解決の参照があるので検証していません".to_owned()
+                    }
+                    _ => "未検証".to_owned(),
+                }
+            }
+        }
     }
 
     fn verify(&mut self) -> Vec<String> {
-        if self.proofs.entries().is_empty() {
+        let obligations: Vec<u64> = self
+            .workspace
+            .cells()
+            .iter()
+            .filter(|cell| cell.is_obligation())
+            .map(|cell| cell.id)
+            .collect();
+        if obligations.is_empty() {
             return vec!["検証義務がありません（:thm で登録します）".to_owned()];
         }
-        let stats = self.proofs.verify_all(&TrivialVerifier);
-        let mut lines = vec![if stats.verified.is_empty() {
+
+        let stats = self.workspace.evaluate();
+        let rechecked: Vec<u64> = stats
+            .order
+            .iter()
+            .copied()
+            .filter(|id| obligations.contains(id))
+            .collect();
+
+        let mut lines = vec![if rechecked.is_empty() {
             // 古くなったものが 1 つもなければ、検証器は 1 度も呼ばれない。
             // これは異常ではなく、早期カットオフが効いている状態である。
             "再検査は不要でした（前回の判定がそのまま有効）".to_owned()
         } else {
-            format!(
-                "再検査 {} 件: 検査済み {} / 仮置き {} / 不成立 {} / 検証器なし {}",
-                stats.verified.len(),
-                stats.checked,
-                stats.assumed,
-                stats.failed,
-                stats.unavailable
-            )
+            format!("再検査 {} 件", rechecked.len())
         }];
-        for entry in self.proofs.entries() {
+
+        for id in obligations {
+            let name = self
+                .workspace
+                .cell(id)
+                .map(|cell| cell.source.clone())
+                .unwrap_or_default();
             lines.push(format!(
-                "  {} : {}",
-                entry.name,
-                self.render_trust(entry.entity)
+                "  [{id}] {name}  ({}) {}",
+                self.render_trust(id),
+                self.obligation_note(id)
             ));
         }
         lines.push(format!(
             "全体の信頼度（最も弱い環）: {}",
-            self.proofs.weakest_link()
+            self.workspace.weakest_link()
         ));
         lines
     }
 
-    fn render_trust(&self, entity: mathrel_kernel::Entity) -> String {
-        let own = self.proofs.own_trust(entity);
-        let effective = self.proofs.effective_trust(entity);
+    /// 信頼度が満点でないものを、原因つきで並べる。
+    ///
+    /// 「全体の信頼度は Assumed です」とだけ言われても何をすればよいか
+    /// 分からない。**どのセルが原因で、なぜそうなったか**まで出す。
+    fn trust(&self) -> Vec<String> {
+        let weak = self.workspace.weak_links();
+        if weak.is_empty() {
+            let has_obligation = self
+                .workspace
+                .cells()
+                .iter()
+                .any(|cell| cell.is_obligation());
+            return vec![if has_obligation {
+                "すべて Checked です。満点でないものはありません".to_owned()
+            } else {
+                "検証義務がありません（:thm で登録します）".to_owned()
+            }];
+        }
+
+        let mut lines = vec![format!(
+            "全体の信頼度（最も弱い環）: {}",
+            self.workspace.weakest_link()
+        )];
+        for link in &weak {
+            let source = self
+                .workspace
+                .cell(link.id)
+                .map(|cell| cell.source.clone())
+                .unwrap_or_default();
+            lines.push(format!("[{}] {source}", link.id));
+            if link.culprit == link.id {
+                lines.push(format!("    {} — {}", link.effective, link.reason));
+            } else {
+                lines.push(format!(
+                    "    {} だが実効 {} — 原因は [{}]: {}",
+                    link.own, link.effective, link.culprit, link.reason
+                ));
+            }
+        }
+        lines.push(String::new());
+        lines.extend(trust_legend());
+        lines
+    }
+
+    fn render_trust(&self, id: u64) -> String {
+        let own = self.workspace.own_trust(id);
+        let effective = self.workspace.effective_trust(id);
         if own == effective {
             own.label().to_owned()
         } else {
@@ -354,7 +480,7 @@ impl Session {
     #[must_use]
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn weakest_link(&self) -> Trust {
-        self.proofs.weakest_link()
+        self.workspace.weakest_link()
     }
 }
 
@@ -363,6 +489,65 @@ fn split_once_trimmed(line: &str) -> (&str, &str) {
         Some((head, rest)) => (head.trim(), rest.trim()),
         None => (line.trim(), ""),
     }
+}
+
+/// `<命題> uses a,b cites c,d` を分解する。
+///
+/// `uses` / `cites` は省略できる。命題の中に現れる場合と区別するため、
+/// 空白で区切られた語として末尾にあるものだけを見る。
+fn split_dependencies(rest: &str) -> (String, Vec<String>, Vec<String>) {
+    let mut statement = rest.trim().to_owned();
+    let mut uses = Vec::new();
+    let mut cites = Vec::new();
+
+    // 後ろから順に剥がす。`uses` が先に書かれても `cites` が先でも動く。
+    loop {
+        let lower = statement.to_lowercase();
+        let at_uses = lower.rfind(" uses ");
+        let at_cites = lower.rfind(" cites ");
+        let at = match (at_uses, at_cites) {
+            (Some(u), Some(c)) => u.max(c),
+            (Some(u), None) => u,
+            (None, Some(c)) => c,
+            (None, None) => break,
+        };
+        let (head, tail) = statement.split_at(at);
+        let tail = tail.trim();
+        let (keyword, names) = match tail.split_once(char::is_whitespace) {
+            Some(parts) => parts,
+            None => break,
+        };
+        let parsed: Vec<String> = names
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if keyword.eq_ignore_ascii_case("uses") {
+            uses.splice(0..0, parsed);
+        } else {
+            cites.splice(0..0, parsed);
+        }
+        statement = head.trim_end().to_owned();
+    }
+
+    (statement, uses, cites)
+}
+
+/// 何をすると信頼度が下がるのか。`:trust` の末尾に出す。
+fn trust_legend() -> Vec<String> {
+    vec![
+        "信頼度が Checked に届かないのは、次のいずれかです。".to_owned(),
+        "  Assumed   :assume で「既知」と宣言した（誰も検査していない）".to_owned(),
+        "  Assumed   証明を書かず sorry を置いた".to_owned(),
+        "  Suggested AI が提案しただけで、検証器を通していない".to_owned(),
+        "  Unknown   検証器がない（Lean 未導入など）".to_owned(),
+        "  Unknown   検証が通らなかった".to_owned(),
+        "  Unknown   未解決の参照があって検証していない".to_owned(),
+        "  Unknown   引用が循環していて検証していない".to_owned(),
+        "".to_owned(),
+        "上流のどれか 1 つでも上記に該当すると、下流の実効信頼度もそこまで落ちます。".to_owned(),
+    ]
 }
 
 fn join_or_dash(items: &[String]) -> String {
@@ -382,9 +567,12 @@ fn help() -> Vec<String> {
         "  :del <番号>       セルを消す".to_owned(),
         "  :deps <番号>      依存関係を見る".to_owned(),
         "  :json            UI 向けの状態を JSON で出す".to_owned(),
-        "  :thm <名> : <命題>    検証義務を登録して検証する".to_owned(),
-        "  :assume <名> : <命題> 「既知」として登録する（検査はしない）".to_owned(),
-        "  :verify          検証をやり直して信頼度を出す".to_owned(),
+        "  :thm <名> : <命題> [uses a,b] [cites c,d]".to_owned(),
+        "                   検証義務を登録して検証する".to_owned(),
+        "  :assume <名> : <命題> [uses ...] [cites ...]".to_owned(),
+        "                   「既知」として登録する（検査はしない）".to_owned(),
+        "  :verify          検証をやり直す".to_owned(),
+        "  :trust           信頼度が満点でないものを原因つきで出す".to_owned(),
         "  :demo            企画書 P1 の完了条件を流す".to_owned(),
         "  :quit            終了".to_owned(),
     ]
@@ -537,7 +725,163 @@ mod tests {
         let output = run(&mut session, ":assume big : 難しい命題");
         assert!(output.contains("Assumed"), "{output}");
         assert!(!output.contains("Checked"), "{output}");
+        assert!(
+            output.contains("仮置き"),
+            "「検証済み」と呼んではならない: {output}"
+        );
         assert_eq!(session.weakest_link(), Trust::Assumed);
+    }
+
+    // --- 信頼度の警告 ---
+
+    /// 満点でないものができた時点で、命令の種類によらず警告が出る。
+    #[test]
+    fn a_warning_appears_as_soon_as_something_is_not_fully_trusted() {
+        let mut session = Session::new();
+        assert!(!run(&mut session, "x = 2").contains("⚠"), "満点なら出ない");
+
+        let assumed = run(&mut session, ":assume hard : 難しい命題");
+        assert!(assumed.contains("⚠"), "{assumed}");
+        assert!(
+            assumed.contains("[3]") || assumed.contains("[2]"),
+            "{assumed}"
+        );
+
+        // 関係のない命令の後でも出続ける。見落とさせない。
+        assert!(run(&mut session, ":list").contains("⚠"));
+        assert!(run(&mut session, "y = 1").contains("⚠"));
+    }
+
+    /// 満点に戻れば警告は消える。
+    #[test]
+    fn the_warning_disappears_once_everything_is_checked() {
+        let mut session = Session::new();
+        run(&mut session, ":assume hard : 難しい命題");
+        assert!(run(&mut session, ":list").contains("⚠"));
+
+        run(&mut session, ":del 1");
+        assert!(!run(&mut session, ":list").contains("⚠"), "消える");
+    }
+
+    /// `:trust` は原因のセルを名指しし、何をすると下がるのかを並べる。
+    #[test]
+    fn trust_names_the_culprit_and_explains_the_causes() {
+        let mut session = Session::new();
+        run(&mut session, ":assume hard : 難しい命題");
+        run(&mut session, ":thm main : a = a cites hard");
+
+        let output = run(&mut session, ":trust");
+        assert!(output.contains("全体の信頼度"), "{output}");
+        assert!(output.contains("原因は [1]"), "上流を名指しする: {output}");
+        assert!(output.contains("誰も検査していません"), "{output}");
+        assert!(
+            output.contains("Checked に届かないのは"),
+            "何をすると下がるのかを出す: {output}"
+        );
+        assert!(!output.contains("⚠"), "内訳の後に警告を重ねない: {output}");
+    }
+
+    #[test]
+    fn trust_says_so_when_everything_is_checked() {
+        let mut session = Session::new();
+        run(&mut session, ":thm refl : a = a");
+        let output = run(&mut session, ":trust");
+        assert!(output.contains("すべて Checked"), "{output}");
+    }
+
+    #[test]
+    fn trust_says_so_when_there_is_nothing_to_verify() {
+        let mut session = Session::new();
+        run(&mut session, "x = 2");
+        assert!(run(&mut session, ":trust").contains("ありません"));
+    }
+
+    /// 検証器がないことは「反証された」と区別して伝える。
+    #[test]
+    fn a_failed_verification_explains_itself() {
+        let mut session = Session::new();
+        run(&mut session, ":thm hard : ∀ t, 0 ≤ f t");
+        let output = run(&mut session, ":trust");
+        assert!(output.contains("通りませんでした"), "{output}");
+        assert!(!output.contains("反証"), "{output}");
+    }
+
+    // --- セルと定理が同じグラフに載る（issue #22）---
+
+    /// 定理はセルが定義する名前を参照でき、セルを変えれば再検査される。
+    #[test]
+    fn a_theorem_depends_on_a_cell_and_is_rechecked_when_it_changes() {
+        let mut session = Session::new();
+        run(&mut session, "x = 2");
+        let added = run(&mut session, ":thm nonneg : x = x uses x");
+        assert!(added.contains("Checked"), "{added}");
+
+        let deps = run(&mut session, ":deps 2");
+        assert!(deps.contains("依存先   : [1]"), "定理はセルに依存: {deps}");
+        assert!(deps.contains("NameBound(x)"), "{deps}");
+
+        let changed = run(&mut session, ":set 1 x = 3");
+        assert!(
+            changed.contains("再計算: [2]"),
+            "セルを変えると定理が再検査される: {changed}"
+        );
+    }
+
+    /// セルの値が変わらなければ、定理は再検査されない。
+    #[test]
+    fn a_theorem_is_not_rechecked_when_the_cell_value_is_unchanged() {
+        let mut session = Session::new();
+        run(&mut session, "x = 2");
+        run(&mut session, "y = x + 1");
+        run(&mut session, ":thm refl : y = y uses y");
+
+        let changed = run(&mut session, ":set 1 x = 1 + 1");
+        assert!(
+            !changed.contains("[3]"),
+            "値が同じなら定理は動かない: {changed}"
+        );
+    }
+
+    /// 引用の連鎖に沿って実効信頼度が落ちる。
+    #[test]
+    fn citing_an_assumption_drags_the_effective_trust_down() {
+        let mut session = Session::new();
+        run(&mut session, ":assume hard : 難しい命題");
+        let output = run(&mut session, ":thm main : a = a cites hard");
+
+        assert!(
+            output.contains("Checked → 実効 Assumed"),
+            "自分は検査済みでも実効は落ちる: {output}"
+        );
+        assert_eq!(session.weakest_link(), Trust::Assumed);
+    }
+
+    /// 存在しない命題を引用したら、未解決として残る。
+    #[test]
+    fn citing_a_missing_lemma_leaves_it_unresolved() {
+        let mut session = Session::new();
+        let output = run(&mut session, ":thm main : a = a cites nowhere");
+        assert!(output.contains("未解決"), "{output}");
+    }
+
+    #[test]
+    fn uses_and_cites_are_parsed_off_the_end_of_the_statement() {
+        assert_eq!(
+            split_dependencies("0 <= x uses x cites lemma"),
+            (
+                "0 <= x".to_owned(),
+                vec!["x".to_owned()],
+                vec!["lemma".to_owned()]
+            )
+        );
+        assert_eq!(
+            split_dependencies("P cites a, b"),
+            ("P".to_owned(), vec![], vec!["a".to_owned(), "b".to_owned()])
+        );
+        assert_eq!(
+            split_dependencies("何も付いていない命題"),
+            ("何も付いていない命題".to_owned(), vec![], vec![])
+        );
     }
 
     #[test]

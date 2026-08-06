@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 mathrel-kernel.workspace = true
+mathrel-verify.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"
