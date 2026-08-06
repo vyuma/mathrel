@@ -742,4 +742,32 @@ mod tests {
         let view = SpaceView::of(&workspace, &[]);
         assert_eq!(view.cells[0].status.label, "仮置き");
     }
+
+    /// 引用先を消す操作は、回復ではなく下降として報じられる（#53 の回帰）。
+    ///
+    /// host 側の `live_trust` が無いと、依存辺ごと消えて古い Checked verdict
+    /// だけが残り、「Assumed → Checked に上がりました」という肯定調の
+    /// ニュースになる。根拠を消した操作を祝ってはならない。
+    #[test]
+    fn removing_cited_evidence_reports_a_drop_not_a_recovery() {
+        let mut workspace = workspace();
+        let lemma =
+            workspace.add_assumption(parse_obligation_line("lemma : 難しい命題").expect("parse"));
+        workspace.add_obligation(parse_obligation_line("thm : a = a cites lemma").expect("parse"));
+        workspace.evaluate();
+        let previous = SpaceView::of(&workspace, &[]);
+
+        workspace.remove_cell(lemma).expect("remove");
+        let stats = workspace.evaluate();
+        let next = SpaceView::of(&workspace, &stats.order);
+
+        let changes = trust_changes(&previous, &next);
+        assert_eq!(changes.len(), 1, "{changes:?}");
+        assert_eq!(
+            changes[0].shift(),
+            TrustShift::Drop,
+            "根拠を消して信頼度が上がってはならない"
+        );
+        assert_eq!(changes[0].to, Trust::Unknown);
+    }
 }

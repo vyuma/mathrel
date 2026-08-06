@@ -145,7 +145,8 @@ await wait(400);
 cells = await evaluate(READ);
 check("未解決のセルが未解決と出る", cells[3]?.badge === "未解決", cells[3]?.badge);
 
-// 仮置きを足すと警告が出る。
+// 仮置きを足すと、変化の通知（ニュース）とヘッダの総量が動く。
+// 常時バナーは廃止した（#42、docs §7.1.1）。
 await evaluate(`
   (() => {
     document.querySelectorAll('.mode')[2].click();
@@ -156,30 +157,43 @@ await evaluate(`
 `);
 await wait(400);
 
-const warning = await evaluate(`
+const afterAssume = await evaluate(`
+  (() => ({
+    infoItems: Array.from(document.querySelectorAll('.news .news-item.info')).map((el) => el.textContent),
+    trustline: document.querySelector('.trustline')?.textContent ?? '',
+    panelOpen: !!document.querySelector('.warning'),
+  }))()
+`);
+check(
+  "追加直後に情報調の通知が出る",
+  afterAssume?.infoItems?.length >= 1,
+  JSON.stringify(afterAssume?.infoItems),
+);
+check(
+  "全体の信頼度が下がる（ヘッダ常設）",
+  afterAssume?.trustline?.includes("Assumed"),
+  afterAssume?.trustline,
+);
+check("内訳は勝手には開かない", afterAssume?.panelOpen === false);
+
+// 内訳はヘッダから開く。
+await evaluate(`(() => { document.querySelector('.trustline').click(); })()`);
+await wait(200);
+const panel = await evaluate(`
   (() => {
     const box = document.querySelector('.warning');
     if (!box) return null;
-    return {
-      headline: box.querySelector('.headline')?.textContent ?? '',
-      lines: Array.from(box.querySelectorAll('li')).map((li) => li.textContent),
-      trustline: document.querySelector('.trustline')?.textContent ?? '',
-    };
+    return { lines: Array.from(box.querySelectorAll('li')).map((li) => li.textContent) };
   })()
 `);
-check("満点でないと警告が出る", warning !== null);
-check(
-  "全体の信頼度が下がる",
-  warning?.trustline?.includes("Assumed"),
-  warning?.trustline,
-);
+check("ヘッダから内訳が開く", panel !== null);
 check(
   "仮置きが理由つきで挙がる",
-  warning?.lines?.some((line) => line.includes("誰も検査していません")),
-  JSON.stringify(warning?.lines),
+  panel?.lines?.some((line) => line.includes("誰も検査していません")),
+  JSON.stringify(panel?.lines),
 );
 
-// 引用すると下流も落ちる。
+// 引用すると下流も落ちる。開いた内訳は開いたまま更新される。
 await evaluate(`
   (() => {
     document.querySelectorAll('.mode')[1].click();
@@ -198,11 +212,49 @@ check(
   JSON.stringify(dragged),
 );
 
+// 削除 → 元に戻す（#45）。仮置きを消すと下流の定理は Unknown へ**下がる**
+// （上がって見えたら #53 の再発）。復元で Assumed に戻る。
+await evaluate(`
+  (() => {
+    const cells = Array.from(document.querySelectorAll('.cell'));
+    const hard = cells.find((cell) => (cell.querySelector('.input')?.value ?? '').includes('hard'));
+    hard.querySelector('.remove').click();
+  })()
+`);
+await wait(400);
+const afterRemove = await evaluate(`
+  (() => ({
+    undo: !!document.querySelector('.news .undo'),
+    warns: Array.from(document.querySelectorAll('.news .news-item.warn')).map((el) => el.textContent),
+    goods: document.querySelectorAll('.news .news-item.good').length,
+  }))()
+`);
+check("削除に「元に戻す」が付く", afterRemove?.undo === true);
+check(
+  "根拠を消すと下降の警告が出る（回復として祝わない）",
+  afterRemove?.warns?.some((line) => line.includes("Unknown")) && afterRemove?.goods === 0,
+  JSON.stringify(afterRemove),
+);
+await evaluate(`(() => { document.querySelector('.news .undo').click(); })()`);
+await wait(400);
+const afterRestore = await evaluate(`
+  (() => ({
+    count: document.querySelectorAll('.cell').length,
+    trustline: document.querySelector('.trustline')?.textContent ?? '',
+  }))()
+`);
+check("復元でセルが戻る", afterRestore?.count === 6, JSON.stringify(afterRestore));
+check(
+  "復元で信頼度が Assumed に戻る",
+  afterRestore?.trustline?.includes("Assumed"),
+  afterRestore?.trustline,
+);
+
 const shot = await send("Page.captureScreenshot", { format: "png" });
 if (shot.result?.data) {
   const { writeFile } = await import("node:fs/promises");
   await writeFile(
-    "/home/vyuma/.claude/jobs/114abfd7/tmp/ui-after.png",
+    process.env.MATHREL_SHOT ?? "/tmp/mathrel-ui-after.png",
     Buffer.from(shot.result.data, "base64"),
   );
 }

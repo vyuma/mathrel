@@ -23,7 +23,7 @@ html { scroll-behavior: smooth; }
 
 body {
   margin: 0;
-  padding: 0 0 11rem;
+  padding: 0;
   background: var(--bg);
   color: var(--fg);
   font: 15px/1.6 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
@@ -103,6 +103,8 @@ main { padding: 0.5rem 1.25rem; }
   background: #fff;
   margin: 0.5rem 0;
   padding: 0.6rem 0.75rem;
+  /* アンカージャンプの着地が sticky ヘッダの裏に隠れないための余白。 */
+  scroll-margin-top: 4.5rem;
 }
 .cell.clean { border-left-color: var(--clean); }
 .cell.stale { border-left-color: var(--stale); }
@@ -199,13 +201,20 @@ main { padding: 0.5rem 1.25rem; }
 
 /* --- ニュース（変化の通知。次の操作まで残る） --- */
 
+/* ライブリージョンなので常設マウント。空のときは高さゼロに畳むだけで、
+   display:none にはしない（display:none はアクセシビリティツリーから外れ、
+   読み上げが死ぬ）。 */
 .news {
   flex-basis: 100%;
-  margin: 0 0 0.5rem;
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  /* ニュースが積もってもフッター全体が画面を食い尽くさないように。 */
+  max-height: 40vh;
+  overflow-y: auto;
 }
+.news.has-news { margin-bottom: 0.5rem; }
 .news-item {
   margin: 0;
   padding: 0.35rem 0.6rem;
@@ -247,11 +256,12 @@ main { padding: 0.5rem 1.25rem; }
 .input:focus { outline: 2px solid var(--accent); outline-offset: -1px; background: #fff; }
 math-field.input { --caret-color: var(--accent); }
 
+/* fixed ではなく sticky。fixed だとニュースでフッターが伸びたとき、body 側の
+   固定 padding では足りず、セル一覧の末尾が恒久的に裏へ隠れる（実際に
+   レビューで出た）。sticky なら flow 上の高さが自動で確保される。 */
 .compose {
-  position: fixed;
+  position: sticky;
   bottom: 0;
-  left: 0;
-  right: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

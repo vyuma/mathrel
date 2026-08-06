@@ -149,6 +149,25 @@ fn App() -> impl IntoView {
     let removed: RwSignal<Option<Removed>, LocalStorage> = RwSignal::new_local(None);
     let show_breakdown = RwSignal::new(false);
 
+    // フォーカスの落下防止。削除・復元・再送のボタンは押すと自分が DOM から
+    // 消えるので、放っておくとフォーカスが文書先頭に落ち、キーボード利用者は
+    // 現在地を失う。行き先を明示的に与える。
+    let draft_ref: NodeRef<leptos::html::Input> = NodeRef::new();
+    let undo_ref: NodeRef<leptos::html::Button> = NodeRef::new();
+    let focus_draft = move || {
+        if let Some(input) = draft_ref.get_untracked() {
+            let _ = input.focus();
+        }
+    };
+    // 「元に戻す」はニュース欄に**後から**現れるので、マウントを待って移す。
+    Effect::new(move |_| {
+        if removed.get().is_some() {
+            if let Some(button) = undo_ref.get() {
+                let _ = button.focus();
+            }
+        }
+    });
+
     // 評価して画面を更新する。**前回との差分**がニュースになる。
     // 「1 つ変えたら何が古くなったか」を目で確かめられる唯一の場所である。
     let refresh = move |quiet: bool| {
@@ -295,6 +314,7 @@ fn App() -> impl IntoView {
         removed.set(None);
         touched.set(added);
         refresh(false);
+        focus_draft();
     };
 
     // 最初の内容。空の画面より、動いているものを見せるほうが早い。
@@ -327,7 +347,7 @@ fn App() -> impl IntoView {
         </main>
 
         <footer class="compose">
-            <News space=space touched=touched removed=removed restore=restore />
+            <News space=space touched=touched removed=removed undo_ref=undo_ref restore=restore />
             <form
                 class="compose-row"
                 on:submit=move |event: leptos::ev::SubmitEvent| {
@@ -343,6 +363,7 @@ fn App() -> impl IntoView {
                 <input
                     class=move || format!("input draft {}", mode.get().css())
                     placeholder=move || mode.get().placeholder()
+                    node_ref=draft_ref
                     prop:value=move || draft.get()
                     on:input=move |event| {
                         if let Some(text) = mathfield::value_from(&event) {
@@ -362,6 +383,7 @@ fn App() -> impl IntoView {
                         on:click=move |_| {
                             mode.set(Adding::Expression);
                             submit();
+                            focus_draft();
                         }
                     >
                         "数式として追加する"
@@ -461,11 +483,18 @@ fn WeakLine(weak: WeakLinkView) -> impl IntoView {
 /// 1.4 秒のフラッシュは変化盲に食われる（注視点は自分が打った入力欄にある）。
 /// 消えない一覧をここに置くことで、見逃しても証拠が残る（#43）。信頼度の
 /// 変化は下降 → 新規 → 回復の順で、それぞれ調子を変える（#42）。
+///
+/// `<section>` 自体は**常設マウント**にする。ライブリージョンは「既に DOM に
+/// ある領域の中身の変化」しか読み上げられないので、`Show` で領域ごと
+/// 出し入れすると、スクリーンリーダーには最初の通知が届かない。
 #[component]
 fn News(
     space: RwSignal<SpaceView>,
     touched: RwSignal<Option<CellId>>,
     removed: RwSignal<Option<Removed>, LocalStorage>,
+    /// 「元に戻す」ボタン。削除直後にフォーカスを移す先（削除ボタンは
+    /// 消えるので、放っておくとフォーカスが文書先頭に落ちる）。
+    undo_ref: NodeRef<leptos::html::Button>,
     // `Show` の子は Send を要求する。LocalStorage のハンドルも StoredValue の
     // ハンドルも Send なので、境界を書けば実体は満たす。
     restore: impl Fn() + Copy + Send + Sync + 'static,
@@ -482,41 +511,47 @@ fn News(
     let has_news = move || !changes().is_empty() || !ripple().is_empty() || removed.get().is_some();
 
     view! {
-        <Show when=has_news>
-            <section class="news" role="status" aria-live="polite">
-                <For
-                    each=top_changes
-                    key=|change| (change.id, change.to)
-                    let:change
-                >
-                    <TrustNews change=change space=space />
-                </For>
-                <Show when=overflow>
-                    <p class="news-item plain">
-                        {move || format!("…他 {} 件（内訳はヘッダから）", changes().len() - 4)}
-                    </p>
-                </Show>
-                <Show when=move || !ripple().is_empty()>
-                    <p class="news-item plain">
-                        "この操作で再計算: "
-                        <RefList links=Signal::derive(ripple) />
-                    </p>
-                </Show>
-                <Show when=move || removed.get().is_some()>
-                    <p class="news-item plain">
-                        {move || {
-                            removed
-                                .get()
-                                .map(|gone| format!("「{}」を削除しました", gone.source))
-                                .unwrap_or_default()
-                        }}
-                        <button type="button" class="undo" on:click=move |_| restore()>
-                            "元に戻す"
-                        </button>
-                    </p>
-                </Show>
-            </section>
-        </Show>
+        <section class="news" class:has-news=has_news role="status" aria-live="polite">
+            <For
+                each=top_changes
+                key=|change| (change.id, change.from, change.to, change.label.clone())
+                let:change
+            >
+                <TrustNews change=change space=space />
+            </For>
+            <Show when=overflow>
+                <p class="news-item plain">
+                    // 「内訳はヘッダから」と誘導してはいけない。並び順の都合で
+                    // 隠れるのはほぼ回復（Recovery）であり、回復は満点なので
+                    // ヘッダの内訳（weak_links）には載らない。案内が空振りする。
+                    {move || format!("…他 {} 件", changes().len() - 4)}
+                </p>
+            </Show>
+            <Show when=move || !ripple().is_empty()>
+                <p class="news-item plain">
+                    "この操作で再計算: "
+                    <RefList links=Signal::derive(ripple) />
+                </p>
+            </Show>
+            <Show when=move || removed.get().is_some()>
+                <p class="news-item plain">
+                    {move || {
+                        removed
+                            .get()
+                            .map(|gone| format!("「{}」を削除しました", gone.source))
+                            .unwrap_or_default()
+                    }}
+                    <button
+                        type="button"
+                        class="undo"
+                        node_ref=undo_ref
+                        on:click=move |_| restore()
+                    >
+                        "元に戻す"
+                    </button>
+                </p>
+            </Show>
+        </section>
     }
 }
 
@@ -680,7 +715,10 @@ fn Links(label: &'static str, links: Signal<Vec<LinkView>>) -> impl IntoView {
 #[component]
 fn RefList(links: Signal<Vec<LinkView>>) -> impl IntoView {
     view! {
-        <For each=move || links.get() key=|link| link.id let:link>
+        // key に label も含める。id だけだと、リンク先が改名されたときに
+        // `<For>` が行を再利用して**古い名前を表示し続ける**（rows と同じ罠。
+        // App 冒頭のコメント参照）。
+        <For each=move || links.get() key=|link| (link.id, link.label.clone()) let:link>
             <a
                 class="link"
                 href=format!("#cell-{}", link.id)
